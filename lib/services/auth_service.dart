@@ -19,7 +19,7 @@ class AuthService {
         "_${DateTime.now().microsecond}";
   }
 
-  // MÉTODO AGREGADO PARA CORREGIR EL ERROR
+  // MÉTODO PARA ACTUALIZAR DISPONIBILIDAD
   Future<void> updateAvailability(String userId, bool isAvailable) async {
     try {
       await _database.child('users').child(userId).update({
@@ -28,6 +28,20 @@ class AuthService {
     } catch (e) {
       print('Error al actualizar disponibilidad: $e');
       throw Exception('No se pudo actualizar el estado');
+    }
+  }
+
+  // MÉTODO PARA VERIFICAR SI EL USUARIO ESTÁ BLOQUEADO
+  Future<bool> isUserBlocked(String userId) async {
+    try {
+      final snapshot = await _database.child('users').child(userId).child('status').get();
+      if (snapshot.exists && snapshot.value == 'blocked') {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error al verificar estado de bloqueo: $e');
+      return false;
     }
   }
 
@@ -68,6 +82,7 @@ class AuthService {
       userData['createdAt'] = userModel.createdAt.toIso8601String();
       userData['password'] = _hashPassword(password);
       userData['odCode'] = odCode;
+      userData['status'] = 'active'; // Estado por defecto: activo
 
       await _database.child('users').child(userModel.id).set(userData);
 
@@ -115,5 +130,7 @@ class AuthService {
     }
   }
 
-  Future<void> logout() async { _currentUser = null; }
+  Future<void> logout() async {
+    _currentUser = null;
+  }
 }

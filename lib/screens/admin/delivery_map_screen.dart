@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:geolocator/geolocator.dart';
 
 class DeliveryMapScreen extends StatefulWidget {
   const DeliveryMapScreen({Key? key}) : super(key: key);
@@ -17,40 +18,36 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
   @override
   void initState() {
     super.initState();
+    _checkPermissions(); // Verificar permisos al iniciar
     _listenToRepartidores();
+  }
+
+  Future<void> _checkPermissions() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      await Geolocator.requestPermission();
+    }
   }
 
   void _listenToRepartidores() {
     _dbRef.orderByChild('role').equalTo('repartidor').onValue.listen((event) {
       if (event.snapshot.value == null) return;
-
       final data = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
       final Map<MarkerId, Marker> newMarkers = {};
 
       data.forEach((key, value) {
         final repartidor = Map<String, dynamic>.from(value);
-        
         if (repartidor['latitude'] != null && repartidor['longitude'] != null) {
           final markerId = MarkerId(key);
-          final position = LatLng(repartidor['latitude'], repartidor['longitude']);
-          
-          final marker = Marker(
+          newMarkers[markerId] = Marker(
             markerId: markerId,
-            position: position,
-            // Usamos color Cian para representar las motos de los repartidores
+            position: LatLng(repartidor['latitude'], repartidor['longitude']),
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
-            infoWindow: InfoWindow(
-              title: "Repartidor: ${repartidor['username']}",
-              snippet: repartidor['isAvailable'] == true ? 'ESTADO: ACTIVO' : 'ESTADO: OCUPADO',
-            ),
+            infoWindow: InfoWindow(title: repartidor['username']),
           );
-          newMarkers[markerId] = marker;
         }
       });
-
-      if (mounted) {
-        setState(() => _markers = newMarkers);
-      }
+      if (mounted) setState(() => _markers = newMarkers);
     });
   }
 
@@ -59,25 +56,15 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
     return Scaffold(
       body: GoogleMap(
         initialCameraPosition: const CameraPosition(
-          target: LatLng(-2.9018, -79.0061), // Centro de Cuenca
+          target: LatLng(-2.9018, -79.0061),
           zoom: 14,
         ),
         markers: Set<Marker>.of(_markers.values),
         onMapCreated: (controller) => _mapController = controller,
+        // CAMBIO A SATÉLITE
+        mapType: MapType.satellite, 
+        myLocationEnabled: true, // Ahora funcionará porque pedimos permiso en initState
         myLocationButtonEnabled: true,
-        mapType: MapType.normal,
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          if (_markers.isNotEmpty) {
-            _mapController?.animateCamera(
-              CameraUpdate.newLatLng(_markers.values.first.position),
-            );
-          }
-        },
-        label: Text('${_markers.length} Motos en línea'),
-        icon: const Icon(Icons.motorcycle),
-        backgroundColor: Colors.pink[600],
       ),
     );
   }

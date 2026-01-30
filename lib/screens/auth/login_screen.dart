@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../../services/auth_service.dart';
+import '../../services/notificacion_service.dart';
 import '../../models/user_model.dart';
 import '../admin/admin_screen.dart';
 import '../repartidor/repartidor_screen.dart';
@@ -16,12 +18,29 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
-  
+  final _dbRef = FirebaseDatabase.instance.ref();
+
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // LISTENER PARA MOSTRAR NOTIFICACIONES EN PRIMER PLANO EN ESTA PANTALLA
+    NotificationService().setupForegroundListener((title, body) {
+      if (!mounted) return;
+      NotificationService.showInAppNotification(
+        context,
+        title,
+        body,
+        backgroundColor: Colors.pink[600],
+      );
+    });
+  }
 
   @override
   void dispose() {
@@ -44,7 +63,26 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (user != null) {
-        // Redirección estricta por rol
+        // --- LOGICA DE SEGURIDAD CRITICA ---
+        // Verificamos si el campo status es 'bloqueado' antes de navegar
+        final snapshot = await _dbRef.child('users').child(user.id).child('status').get();
+
+        if (snapshot.exists && snapshot.value.toString() == 'bloqueado') {
+          await _authService.logout();
+          if (!mounted) return;
+
+          _showBlockedDialog();
+          setState(() => _isLoading = false);
+          return;
+        }
+        // -----------------------------------
+
+        // INICIALIZAR FCM PARA ESTE USUARIO (GUARDA TOKEN + TOPICS POR ROL)
+        await NotificationService().initialize(
+          userId: user.id,
+          role: user.role,
+        );
+
         _navigateByRole(user);
       } else {
         _showErrorSnackBar('Usuario o contraseña incorrectos');
@@ -57,13 +95,76 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // DIALOGO EMERGENTE PARA CUENTA BLOQUEADA
+  void _showBlockedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red[100],
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.block, color: Colors.red, size: 24),
+            ),
+            const SizedBox(width: 10),
+            const Flexible(
+              child: Text(
+                'ACCESO DENEGADO',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: Colors.red,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Divider(),
+            SizedBox(height: 10),
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 50),
+            SizedBox(height: 15),
+            Text(
+              'Su cuenta ha sido bloqueada. Contacte al administrador. Gracias',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16),
+            ),
+            SizedBox(height: 10),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text(
+                'ENTENDIDO',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red, behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -71,27 +172,14 @@ class _LoginScreenState extends State<LoginScreen> {
     Widget nextScreen;
     final String role = user.role.toLowerCase().trim();
 
-    // Mapeo exacto de roles a pantallas
     switch (role) {
-      case 'administrador':
-        nextScreen = AdminScreen(user: user);
-        break;
-      case 'repartidor':
-        nextScreen = RepartidorScreen(user: user);
-        break;
-      case 'cliente':
-        nextScreen = ClienteScreen(user: user);
-        break;
-      default:
-        // Por seguridad, si el rol no coincide, mandamos a cliente
-        nextScreen = ClienteScreen(user: user);
-        break;
+      case 'administrador': nextScreen = AdminScreen(user: user); break;
+      case 'repartidor': nextScreen = RepartidorScreen(user: user); break;
+      case 'cliente': nextScreen = ClienteScreen(user: user); break;
+      default: nextScreen = ClienteScreen(user: user); break;
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => nextScreen),
-    );
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => nextScreen));
   }
 
   @override
@@ -109,18 +197,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 60),
                 Icon(Icons.delivery_dining, size: 100, color: Colors.pink[600]),
                 const SizedBox(height: 24),
-                const Text(
-                  'Delivery App',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const Text(
-                  'Identifícate para continuar',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                  textAlign: TextAlign.center,
-                ),
+                const Text('Delivery App', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                 const SizedBox(height: 40),
-
                 TextFormField(
                   controller: _usernameController,
                   decoration: InputDecoration(
@@ -131,7 +209,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   validator: (value) => (value == null || value.isEmpty) ? 'Ingresa tu usuario' : null,
                 ),
                 const SizedBox(height: 16),
-
                 TextFormField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -147,7 +224,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   validator: (value) => (value == null || value.isEmpty) ? 'Ingresa tu contraseña' : null,
                 ),
                 const SizedBox(height: 30),
-
                 ElevatedButton(
                   onPressed: _isLoading ? null : _handleLogin,
                   style: ElevatedButton.styleFrom(
@@ -160,7 +236,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                       : const Text('ENTRAR', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
-                
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const RegisterScreen())),
