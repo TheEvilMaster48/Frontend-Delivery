@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
 
-// Función global para manejar notificaciones en segundo plano/app cerrada
+// Función global para manejar notificaciones en segundo plano
+@pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("Manejando mensaje en segundo plano: ${message.messageId}");
 }
@@ -28,24 +31,29 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   final ScrollController _chatScrollController = ScrollController();
   final TextEditingController _vehiculoCtrl = TextEditingController();
   final TextEditingController _placaCtrl = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
   
   int _currentIndex = 4; 
   String? _activeOrderId;
   Map<String, dynamic>? _activeOrder;
   bool _isLoading = false;
   StreamSubscription<DatabaseEvent>? _ordersSubscription;
+  StreamSubscription<DatabaseEvent>? _userSecuritySubscription;
 
   @override
   void initState() {
     super.initState();
+    _checkInitialStatus(); // Verificar bloqueo al entrar
     _setupNotifications();
     _listenToOrders();
     _verificarRegistroVehiculo();
+    _listenToSecurityStatus(); // Escuchar bloqueo en tiempo real
   }
 
   @override
   void dispose() {
     _ordersSubscription?.cancel();
+    _userSecuritySubscription?.cancel();
     _chatCtrl.dispose();
     _chatScrollController.dispose();
     _vehiculoCtrl.dispose();
@@ -53,31 +61,43 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     super.dispose();
   }
 
-  // Configuración para recibir notificaciones 24/7
+  // Verificación inmediata al cargar la pantalla
+  void _checkInitialStatus() async {
+    final snapshot = await _dbRef.child('users').child(widget.user.id).child('status').get();
+    if (snapshot.exists && snapshot.value == 'blocked') {
+      _handleLogout(forced: true);
+    }
+  }
+
+  // Escuchar si el administrador bloquea al usuario en tiempo real
+  void _listenToSecurityStatus() {
+    _userSecuritySubscription = _dbRef.child('users').child(widget.user.id).child('status').onValue.listen((event) {
+      if (event.snapshot.value == 'blocked') {
+        _handleLogout(forced: true);
+      }
+    });
+  }
+
   void _setupNotifications() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // Solicitar permisos (iOS/Android 13+)
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
 
-    // Obtener Token para envío de notificaciones personalizadas
     String? token = await messaging.getToken();
     if (token != null) {
       await _dbRef.child('users').child(widget.user.id).update({'fcmToken': token});
     }
 
-    // Escuchar cuando la app está en primer plano
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.notification != null) {
         _showInAppNotification(message.notification!.title, message.notification!.body);
       }
     });
 
-    // Escuchar cuando se abre la app desde una notificación
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       print('App abierta desde notificación: ${message.data}');
     });
@@ -104,7 +124,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     final snapshot = await _dbRef.child('users').child(widget.user.id).get();
     if (snapshot.exists) {
       Map data = snapshot.value as Map;
-      // Si alguno de los campos falta, forzar la pantalla emergente
       if (data['vehiculo'] == null || data['placa'] == null) {
         Future.delayed(Duration.zero, () => _showRegistroVehiculoDialog());
       }
@@ -114,7 +133,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void _showRegistroVehiculoDialog() {
     showDialog(
       context: context,
-      barrierDismissible: false, // Obligatorio: no se cierra tocando fuera
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text("Información del Vehículo", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -150,7 +169,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   'vehiculo': _vehiculoCtrl.text.trim(),
                   'placa': _placaCtrl.text.trim().toUpperCase(),
                 });
-                Navigator.pop(context); // Cierra el modal y queda en la pantalla principal
+                Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Datos guardados con éxito"), backgroundColor: Colors.green)
                 );
@@ -242,6 +261,26 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     }
   }
 
+  Future<void> _updateProfileImage() async {
+    final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 40);
+    if (image == null) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final bytes = await File(image.path).readAsBytes();
+      String base64Image = base64Encode(bytes);
+      await _dbRef.child('users').child(widget.user.id).update({'profileImg': base64Image});
+      if (_activeOrderId != null) {
+        await _dbRef.child('orders').child(_activeOrderId!).update({'repartidorFoto': base64Image});
+      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Foto de perfil actualizada"), backgroundColor: Colors.green));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error al procesar imagen"), backgroundColor: Colors.red));
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -266,7 +305,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 ),
               ),
             ),
-          IconButton(icon: const Icon(Icons.logout), onPressed: _handleLogout),
+          IconButton(icon: const Icon(Icons.logout), onPressed: () => _handleLogout()),
         ],
       ),
       body: _buildBody(),
@@ -649,28 +688,58 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
         var myOrders = orders.entries.where((e) => e.value['repartidorId'] == widget.user.id && e.value['status'] == 'entregado').toList();
         var myRatings = ratings.entries.where((e) => e.value['repartidorId'] == widget.user.id).toList();
-        double avgRating = 5.0;
-        String lastFeedback = "¡Excelente rapidez!";
+        
+        double avgRating = 0.0;
+        String lastFeedback = "-";
+        
         if (myRatings.isNotEmpty) {
           double sum = 0;
-          for (var r in myRatings) { sum += (double.tryParse(r.value['stars'].toString()) ?? 5.0); }
+          for (var r in myRatings) { sum += (double.tryParse(r.value['stars'].toString()) ?? 0.0); }
           avgRating = sum / myRatings.length;
           lastFeedback = myRatings.last.value['comment'] ?? "Buen servicio";
         }
+        
         int entregas = myOrders.length;
         int puntos = entregas * 10;
         String nivel = (entregas < 5) ? "Bronce" : (entregas < 20) ? "Plata" : "Oro";
         
-        // Mostrar Vehículo y Placa en tiempo real
         String displayVehiculo = myData['vehiculo'] ?? "No registrado";
-        String displayPlaca = myData['placa'] ?? "";
+        String displayPlaca = myData['placa'] ?? "No registrada";
+        String? profileImgBase64 = myData['profileImg'];
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
               const SizedBox(height: 20),
-              const CircleAvatar(radius: 60, backgroundColor: Colors.white, child: Icon(Icons.person, size: 80, color: Colors.pink)),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
+                    child: CircleAvatar(
+                      radius: 65,
+                      backgroundColor: Colors.pink,
+                      backgroundImage: profileImgBase64 != null ? MemoryImage(base64Decode(profileImgBase64)) : null,
+                      child: profileImgBase64 == null ? const Icon(Icons.person, size: 85, color: Colors.white) : null,
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    child: GestureDetector(
+                      onTap: _updateProfileImage,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(color: Colors.pink[600], shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3), boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)]),
+                        child: const Icon(Icons.edit, size: 22, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  if (_isLoading) const CircularProgressIndicator(color: Colors.pink),
+                ],
+              ),
               const SizedBox(height: 15),
               Text(widget.user.username, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
               const Text("Repartidor Profesional", style: TextStyle(color: Colors.grey, fontSize: 16)),
@@ -692,8 +761,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               const SizedBox(height: 20),
               _infoTile(Icons.star, "Mi Reputación", "${avgRating.toStringAsFixed(1)} / 5.0", Colors.amber),
               _infoTile(Icons.comment, "Feedback de Clientes", lastFeedback, Colors.blue),
-              _infoTile(Icons.directions_bike, "Vehículo", "$displayVehiculo $displayPlaca", Colors.orange),
-              _infoTile(Icons.verified_user, "Cuenta Verificada", "Activo", Colors.green),
+              _infoTile(Icons.directions_bike, "Vehículo", displayVehiculo, Colors.orange),
+              _infoTile(Icons.vignette, "Placa", displayPlaca, Colors.deepPurple),
+              _infoTile(Icons.verified_user, "Estado de Cuenta", (myData['status'] ?? "Activo").toString().toUpperCase(), Colors.green),
             ],
           ),
         );
@@ -716,16 +786,23 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       child: ListTile(
         leading: Icon(icon, color: color),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        trailing: Text(value, style: const TextStyle(color: Colors.grey)),
+        trailing: Text(value, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
       ),
     );
   }
 
   void _aceptarPedido(String id) async {
+    final userSnap = await _dbRef.child('users').child(widget.user.id).get();
+    String? fotoActual;
+    if (userSnap.exists) {
+      Map data = userSnap.value as Map;
+      fotoActual = data['profileImg'];
+    }
     await _dbRef.child('orders').child(id).update({
       'status': 'aceptado',
       'repartidorId': widget.user.id,
       'repartidorNombre': widget.user.username,
+      'repartidorFoto': fotoActual,
       'timestamp_aceptado': ServerValue.timestamp,
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pedido aceptado. Dirígete al local."), backgroundColor: Colors.green));
@@ -749,9 +826,22 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("¡Felicidades! Entrega finalizada."), backgroundColor: Colors.green));
   }
 
-  void _handleLogout() async {
+  void _handleLogout({bool forced = false}) async {
     await _authService.logout();
     if (!mounted) return;
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginScreen()));
+    Navigator.pushAndRemoveUntil(
+      context, 
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+    if (forced) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Su cuenta ha sido bloqueada. Contacte al administrador."),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 10),
+        )
+      );
+    }
   }
 }

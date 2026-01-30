@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart'; // Añadido para verificar status
 import '../../services/auth_service.dart';
 import '../../models/user_model.dart';
 import '../admin/admin_screen.dart';
@@ -16,6 +17,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
+  final _dbRef = FirebaseDatabase.instance.ref(); // Referencia a DB
   
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -44,7 +46,23 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (user != null) {
-        // Redirección estricta por rol
+        // --- NUEVA LÓGICA DE SEGURIDAD PARA BLOQUEADOS ---
+        final snapshot = await _dbRef.child('users').child(user.id).child('status').get();
+        
+        if (snapshot.exists && snapshot.value == 'blocked') {
+          await _authService.logout(); // Cerramos la sesión de Firebase
+          if (!mounted) return;
+          
+          _showErrorDialog(
+            'ACCESO DENEGADO', 
+            'Tu cuenta ha sido bloqueada por el administrador. No puedes iniciar sesión.'
+          );
+          setState(() => _isLoading = false);
+          return;
+        }
+        // ------------------------------------------------
+
+        // Redirección estricta por rol (solo si no está bloqueado)
         _navigateByRole(user);
       } else {
         _showErrorSnackBar('Usuario o contraseña incorrectos');
@@ -55,6 +73,31 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // Nueva función para mostrar un diálogo de error más formal para bloqueos
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red),
+            const SizedBox(width: 10),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ENTENDIDO', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
   }
 
   void _showErrorSnackBar(String message) {
@@ -71,7 +114,6 @@ class _LoginScreenState extends State<LoginScreen> {
     Widget nextScreen;
     final String role = user.role.toLowerCase().trim();
 
-    // Mapeo exacto de roles a pantallas
     switch (role) {
       case 'administrador':
         nextScreen = AdminScreen(user: user);
@@ -83,7 +125,6 @@ class _LoginScreenState extends State<LoginScreen> {
         nextScreen = ClienteScreen(user: user);
         break;
       default:
-        // Por seguridad, si el rol no coincide, mandamos a cliente
         nextScreen = ClienteScreen(user: user);
         break;
     }
