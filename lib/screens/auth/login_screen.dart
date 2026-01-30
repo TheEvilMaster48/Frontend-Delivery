@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart'; 
+import 'package:firebase_database/firebase_database.dart';
 import '../../services/auth_service.dart';
 import '../../models/user_model.dart';
 import '../admin/admin_screen.dart';
@@ -17,11 +17,11 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
-  final _dbRef = FirebaseDatabase.instance.ref(); 
-  
+  final _dbRef = FirebaseDatabase.instance.ref();
+
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -46,18 +46,15 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (user != null) {
-        // --- LÓGICA DE SEGURIDAD CRÍTICA ---
-        // Verificamos si el campo status es 'blocked' antes de navegar
+        // --- LOGICA DE SEGURIDAD CRITICA ---
+        // Verificamos si el campo status es 'bloqueado' antes de navegar
         final snapshot = await _dbRef.child('users').child(user.id).child('status').get();
-        
-        if (snapshot.exists && snapshot.value.toString() == 'blocked') {
-          await _authService.logout(); 
+
+        if (snapshot.exists && snapshot.value.toString() == 'bloqueado') {
+          await _authService.logout();
           if (!mounted) return;
-          
-          _showErrorDialog(
-            'CUENTA BLOQUEADA', 
-            'Tu acceso ha sido restringido por el administrador.'
-          );
+
+          _showBlockedDialog();
           setState(() => _isLoading = false);
           return;
         }
@@ -75,25 +72,68 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _showErrorDialog(String title, String message) {
+  // DIALOGO EMERGENTE PARA CUENTA BLOQUEADA
+  void _showBlockedDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            const Icon(Icons.security, color: Colors.red),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red[100],
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.block, color: Colors.red, size: 24),
+            ),
             const SizedBox(width: 10),
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const Flexible(
+              child: Text(
+                'ACCESO DENEGADO',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: Colors.red,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
-        content: Text(message),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Divider(),
+            SizedBox(height: 10),
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 50),
+            SizedBox(height: 15),
+            Text(
+              'Su cuenta ha sido bloqueada. Contacte al administrador. Gracias',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16),
+            ),
+            SizedBox(height: 10),
+          ],
+        ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-          )
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text(
+                'ENTENDIDO',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
         ],
       ),
     );

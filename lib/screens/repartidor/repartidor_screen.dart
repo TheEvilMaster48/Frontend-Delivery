@@ -32,8 +32,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   final TextEditingController _vehiculoCtrl = TextEditingController();
   final TextEditingController _placaCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
-  
-  int _currentIndex = 4; 
+
+  int _currentIndex = 4;
   String? _activeOrderId;
   Map<String, dynamic>? _activeOrder;
   bool _isLoading = false;
@@ -63,8 +63,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   // Verificación inmediata al cargar la pantalla
   void _checkInitialStatus() async {
+    await Future.delayed(const Duration(milliseconds: 500)); // Pequeño delay para que cargue la UI
+
     final snapshot = await _dbRef.child('users').child(widget.user.id).child('status').get();
-    if (snapshot.exists && snapshot.value == 'blocked') {
+    if (snapshot.exists && snapshot.value == 'bloqueado') {
       _handleLogout(forced: true);
     }
   }
@@ -72,7 +74,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   // Escuchar si el administrador bloquea al usuario en tiempo real
   void _listenToSecurityStatus() {
     _userSecuritySubscription = _dbRef.child('users').child(widget.user.id).child('status').onValue.listen((event) {
-      if (event.snapshot.value == 'blocked') {
+      if (event.snapshot.value == 'bloqueado') {
         _handleLogout(forced: true);
       }
     });
@@ -145,18 +147,18 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             TextField(
               controller: _vehiculoCtrl,
               decoration: InputDecoration(
-                hintText: "Ej: Moto Pulsar 200",
-                labelText: "Vehículo",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
+                  hintText: "Ej: Moto Pulsar 200",
+                  labelText: "Vehículo",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
               ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _placaCtrl,
               decoration: InputDecoration(
-                hintText: "Ej: P-123456",
-                labelText: "Placa",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
+                  hintText: "Ej: P-123456",
+                  labelText: "Placa",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
               ),
             ),
           ],
@@ -171,7 +173,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 });
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Datos guardados con éxito"), backgroundColor: Colors.green)
+                    const SnackBar(content: Text("Datos guardados con éxito"), backgroundColor: Colors.green)
                 );
               }
             },
@@ -230,7 +232,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ),
         content: const Text(
           "Usted se encuentra como ocupado en una entrega. "
-          "Para recibir nuevas solicitudes, primero debe finalizar su orden actual.",
+              "Para recibir nuevas solicitudes, primero debe finalizar su orden actual.",
           style: TextStyle(fontSize: 16),
         ),
         actions: [
@@ -400,9 +402,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                           const SizedBox(height: 10),
                           ListTile(
                             contentPadding: EdgeInsets.zero,
-                            leading: data['productImg'] != null 
-                              ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(data['productImg']), width: 60, height: 60, fit: BoxFit.cover))
-                              : const CircleAvatar(child: Icon(Icons.fastfood)),
+                            leading: data['productImg'] != null
+                                ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(data['productImg']), width: 60, height: 60, fit: BoxFit.cover))
+                                : const CircleAvatar(child: Icon(Icons.fastfood)),
                             title: Text(data['productName'] ?? "Producto"),
                             subtitle: Text(data['productDesc'] ?? ""),
                           ),
@@ -520,7 +522,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               }
               Map msgs = snap.data!.snapshot.value as Map;
               var list = msgs.entries.toList()..sort((a, b) => a.value['t'].compareTo(b.value['t']));
-              
+
               return ListView.builder(
                 controller: _chatScrollController,
                 padding: const EdgeInsets.all(15),
@@ -688,21 +690,21 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
         var myOrders = orders.entries.where((e) => e.value['repartidorId'] == widget.user.id && e.value['status'] == 'entregado').toList();
         var myRatings = ratings.entries.where((e) => e.value['repartidorId'] == widget.user.id).toList();
-        
+
         double avgRating = 0.0;
         String lastFeedback = "-";
-        
+
         if (myRatings.isNotEmpty) {
           double sum = 0;
           for (var r in myRatings) { sum += (double.tryParse(r.value['stars'].toString()) ?? 0.0); }
           avgRating = sum / myRatings.length;
           lastFeedback = myRatings.last.value['comment'] ?? "Buen servicio";
         }
-        
+
         int entregas = myOrders.length;
         int puntos = entregas * 10;
         String nivel = (entregas < 5) ? "Bronce" : (entregas < 20) ? "Plata" : "Oro";
-        
+
         String displayVehiculo = myData['vehiculo'] ?? "No registrado";
         String displayPlaca = myData['placa'] ?? "No registrada";
         String? profileImgBase64 = myData['profileImg'];
@@ -829,19 +831,75 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void _handleLogout({bool forced = false}) async {
     await _authService.logout();
     if (!mounted) return;
+
     Navigator.pushAndRemoveUntil(
-      context, 
+      context,
       MaterialPageRoute(builder: (context) => const LoginScreen()),
-      (route) => false,
+          (route) => false,
     );
+
+    // Mostrar diálogo emergente si fue bloqueado
     if (forced) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Su cuenta ha sido bloqueada. Contacte al administrador."),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 10),
-        )
-      );
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            backgroundColor: Colors.white,
+            title: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.block, color: Colors.red[600], size: 50),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Cuenta Bloqueada',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 22,
+                    color: Colors.black87,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+            content: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(
+                'Su cuenta ha sido bloqueada. Contacte al administrador. Gracias',
+                style: TextStyle(fontSize: 16, color: Colors.black54),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[600],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text(
+                    'ENTENDIDO',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      });
     }
   }
 }
