@@ -21,7 +21,6 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
   }
 
   void _listenToRepartidores() {
-    // Filtramos usuarios que sean 'repartidor'
     _dbRef.orderByChild('role').equalTo('repartidor').onValue.listen((event) {
       if (event.snapshot.value == null) return;
 
@@ -31,7 +30,6 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
       data.forEach((key, value) {
         final repartidor = Map<String, dynamic>.from(value);
         
-        // Verificamos que tenga latitud y longitud
         if (repartidor['latitude'] != null && repartidor['longitude'] != null) {
           final markerId = MarkerId(key);
           final position = LatLng(repartidor['latitude'], repartidor['longitude']);
@@ -39,19 +37,20 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
           final marker = Marker(
             markerId: markerId,
             position: position,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.huePink),
+            // Usamos color Cian para representar las motos de los repartidores
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
             infoWindow: InfoWindow(
-              title: repartidor['username'],
-              snippet: repartidor['isAvailable'] == true ? 'Disponible' : 'Fuera de servicio',
+              title: "Repartidor: ${repartidor['username']}",
+              snippet: repartidor['isAvailable'] == true ? 'ESTADO: ACTIVO' : 'ESTADO: OCUPADO',
             ),
           );
           newMarkers[markerId] = marker;
         }
       });
 
-      setState(() {
-        _markers = newMarkers;
-      });
+      if (mounted) {
+        setState(() => _markers = newMarkers);
+      }
     });
   }
 
@@ -60,13 +59,13 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
     return Scaffold(
       body: GoogleMap(
         initialCameraPosition: const CameraPosition(
-          target: LatLng(-2.9018, -79.0061), // Coordenadas de Cuenca, Ecuador
-          zoom: 13,
+          target: LatLng(-2.9018, -79.0061), // Centro de Cuenca
+          zoom: 14,
         ),
         markers: Set<Marker>.of(_markers.values),
         onMapCreated: (controller) => _mapController = controller,
         myLocationButtonEnabled: true,
-        myLocationEnabled: true,
+        mapType: MapType.normal,
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
@@ -76,8 +75,8 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
             );
           }
         },
-        label: Text('${_markers.length} Repartidores'),
-        icon: const Icon(Icons.delivery_dining),
+        label: Text('${_markers.length} Motos en línea'),
+        icon: const Icon(Icons.motorcycle),
         backgroundColor: Colors.pink[600],
       ),
     );
