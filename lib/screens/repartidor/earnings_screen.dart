@@ -55,7 +55,8 @@ class EarningsScreen extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.receipt_long, size: 80, color: Colors.grey[400]),
+                      Icon(Icons.receipt_long,
+                          size: 80, color: Colors.grey[400]),
                       const SizedBox(height: 16),
                       Text(
                         'No tienes entregas',
@@ -73,7 +74,6 @@ class EarningsScreen extends StatelessWidget {
                   .where((order) => order.status == 'entregado')
                   .toList();
 
-              // Calcular ganancias
               final totalEarnings = _calculateEarnings(completedOrders);
               final todayEarnings = _calculateTodayEarnings(completedOrders);
               final weekEarnings = _calculateWeekEarnings(completedOrders);
@@ -83,7 +83,6 @@ class EarningsScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Resumen de ganancias
                     _buildEarningsSummary(
                       totalEarnings,
                       todayEarnings,
@@ -91,8 +90,6 @@ class EarningsScreen extends StatelessWidget {
                       completedOrders.length,
                     ),
                     const SizedBox(height: 24),
-
-                    // Historial de entregas
                     const Text(
                       'Historial de Entregas',
                       style: TextStyle(
@@ -101,7 +98,6 @@ class EarningsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
-
                     if (completedOrders.isEmpty)
                       const Center(
                         child: Padding(
@@ -113,7 +109,8 @@ class EarningsScreen extends StatelessWidget {
                         ),
                       )
                     else
-                      ...completedOrders.map((order) => _buildEarningCard(order)),
+                      ...completedOrders
+                          .map((order) => _buildEarningCard(order)),
                   ],
                 ),
               );
@@ -125,14 +122,13 @@ class EarningsScreen extends StatelessWidget {
   }
 
   Widget _buildEarningsSummary(
-      double total,
-      double today,
-      double week,
-      int deliveries,
-      ) {
+    double total,
+    double today,
+    double week,
+    int deliveries,
+  ) {
     return Column(
       children: [
-        // Card principal de ganancias totales
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
@@ -179,8 +175,6 @@ class EarningsScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-
-        // Cards de período
         Row(
           children: [
             Expanded(
@@ -206,7 +200,8 @@ class EarningsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildPeriodCard(String label, double amount, IconData icon, Color color) {
+  Widget _buildPeriodCard(
+      String label, double amount, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -240,7 +235,6 @@ class EarningsScreen extends StatelessWidget {
   }
 
   Widget _buildEarningCard(OrderModel order) {
-    // Comisión estimada (ejemplo: 15% del costo de envío)
     final earning = order.deliveryCost * 0.85;
 
     return Card(
@@ -292,10 +286,7 @@ class EarningsScreen extends StatelessWidget {
   }
 
   double _calculateEarnings(List<OrderModel> orders) {
-    return orders.fold(0.0, (sum, order) {
-      // Comisión estimada: 85% del costo de envío
-      return sum + (order.deliveryCost * 0.85);
-    });
+    return orders.fold(0.0, (sum, order) => sum + (order.deliveryCost * 0.85));
   }
 
   double _calculateTodayEarnings(List<OrderModel> orders) {
@@ -312,10 +303,8 @@ class EarningsScreen extends StatelessWidget {
   double _calculateWeekEarnings(List<OrderModel> orders) {
     final now = DateTime.now();
     final weekAgo = now.subtract(const Duration(days: 7));
-    final weekOrders = orders.where((order) {
-      return order.createdAt.isAfter(weekAgo);
-    }).toList();
-
+    final weekOrders =
+        orders.where((order) => order.createdAt.isAfter(weekAgo)).toList();
     return _calculateEarnings(weekOrders);
   }
 }

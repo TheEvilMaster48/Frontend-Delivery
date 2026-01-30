@@ -134,7 +134,8 @@ class AvailableOrdersScreen extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.green[100],
                     borderRadius: BorderRadius.circular(20),
@@ -153,19 +154,16 @@ class AvailableOrdersScreen extends StatelessWidget {
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 12),
-            
-            // Información del pedido
             _buildInfoRow(Icons.person, 'Cliente', order.clientName),
             const SizedBox(height: 8),
-            _buildInfoRow(Icons.location_on, 'Dirección', order.deliveryAddress),
+            _buildInfoRow(
+                Icons.location_on, 'Dirección', order.deliveryAddress),
             const SizedBox(height: 8),
-            _buildInfoRow(Icons.shopping_bag, 'Productos', '${order.items.length} items'),
+            _buildInfoRow(
+                Icons.shopping_bag, 'Productos', '${order.items.length} items'),
             const SizedBox(height: 8),
             _buildInfoRow(Icons.payment, 'Pago', order.paymentMethod),
-            
             const SizedBox(height: 16),
-            
-            // Botón aceptar
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -215,9 +213,7 @@ class AvailableOrdersScreen extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Aceptar Pedido'),
-        content: Text(
-          '¿Deseas aceptar el pedido de ${order.restaurantName}?',
-        ),
+        content: Text('¿Deseas aceptar el pedido de ${order.restaurantName}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -247,6 +243,9 @@ class AvailableOrdersScreen extends StatelessWidget {
           backgroundColor: Colors.green,
         ),
       );
+
+      // ✅ Opcional: aquí NO cambiamos de tab para no tocar RepartidorScreen.
+      // El repartidor puede ir a "Mis Pedidos" y lo verá ahí.
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

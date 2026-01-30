@@ -1,8 +1,10 @@
 import 'package:firebase_database/firebase_database.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 
 class LocationService {
-  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref().child('users');
+  final DatabaseReference _dbRef =
+      FirebaseDatabase.instance.ref().child('users');
 
   // Verificar permisos de ubicación
   Future<bool> checkLocationPermission() async {
@@ -23,15 +25,19 @@ class LocationService {
     return true;
   }
 
+  StreamSubscription<Position>? _sub;
+
   // MÉTODO NUEVO: Activar rastreo y subir a Firebase
   void startRealtimeTracking(String userId) async {
     final hasPermission = await checkLocationPermission();
     if (!hasPermission) return;
 
-    Geolocator.getPositionStream(
+    await _sub?.cancel(); // evita duplicados
+
+    _sub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 10, // Se actualiza cada 10 metros de movimiento
+        distanceFilter: 10,
       ),
     ).listen((Position position) {
       _dbRef.child(userId).update({
@@ -40,6 +46,11 @@ class LocationService {
         'lastUpdate': DateTime.now().toIso8601String(),
       });
     });
+  }
+
+  Future<void> stopRealtimeTracking() async {
+    await _sub?.cancel();
+    _sub = null;
   }
 
   Future<Position?> getCurrentLocation() async {

@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
-import '../../models/order_model.dart';
 import '../../services/auth_service.dart';
-import '../../services/database_service.dart';
-import '../../services/location_service.dart';
 import '../auth/login_screen.dart';
 import 'available_orders_screen.dart';
 import 'my_orders_screen.dart';
@@ -20,8 +17,6 @@ class RepartidorScreen extends StatefulWidget {
 
 class _RepartidorScreenState extends State<RepartidorScreen> {
   final _authService = AuthService();
-  final _databaseService = DatabaseService();
-  final _locationService = LocationService();
 
   int _currentIndex = 0;
   bool _isAvailable = true;
@@ -51,7 +46,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            newAvailability ? 'Ahora estás disponible' : 'Ahora estás no disponible',
+            newAvailability
+                ? 'Ahora estás disponible'
+                : 'Ahora estás no disponible',
           ),
           backgroundColor: newAvailability ? Colors.green : Colors.orange,
         ),
@@ -79,12 +76,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          // Toggle disponibilidad
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: _isAvailable ? Colors.green : Colors.orange,
                   borderRadius: BorderRadius.circular(20),
@@ -139,7 +136,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     children: [
                       const Icon(Icons.star, size: 14, color: Colors.amber),
                       const SizedBox(width: 4),
-                      Text('${widget.user.rating?.toStringAsFixed(1) ?? "5.0"}'),
+                      Text(
+                          '${widget.user.rating?.toStringAsFixed(1) ?? "5.0"}'),
                     ],
                   ),
                   contentPadding: EdgeInsets.zero,
@@ -154,7 +152,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     color: Colors.orange,
                   ),
                   title: Text(
-                    _isAvailable ? 'Pausar disponibilidad' : 'Activar disponibilidad',
+                    _isAvailable
+                        ? 'Pausar disponibilidad'
+                        : 'Activar disponibilidad',
                   ),
                   contentPadding: EdgeInsets.zero,
                 ),
@@ -163,7 +163,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 value: 'logout',
                 child: ListTile(
                   leading: Icon(Icons.logout, color: Colors.red),
-                  title: Text('Cerrar Sesión', style: TextStyle(color: Colors.red)),
+                  title: Text('Cerrar Sesión',
+                      style: TextStyle(color: Colors.red)),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -178,22 +179,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         selectedItemColor: Colors.pink[600],
         unselectedItemColor: Colors.grey,
         items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Inicio'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Inicio',
-          ),
+              icon: Icon(Icons.list_alt), label: 'Disponibles'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.list_alt),
-            label: 'Disponibles',
-          ),
+              icon: Icon(Icons.delivery_dining), label: 'Mis Pedidos'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.delivery_dining),
-            label: 'Mis Pedidos',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.attach_money),
-            label: 'Ganancias',
-          ),
+              icon: Icon(Icons.attach_money), label: 'Ganancias'),
         ],
       ),
     );
@@ -220,13 +212,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Saludo
           Text(
             '¡Hola, ${widget.user.username}!',
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Row(
@@ -235,231 +223,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               const SizedBox(width: 4),
               Text(
                 '${widget.user.rating?.toStringAsFixed(1) ?? "5.0"} estrellas',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
-                ),
+                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
               ),
             ],
           ),
-          const SizedBox(height: 24),
-
-          // Estado de disponibilidad
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: _isAvailable
-                    ? [Colors.green[400]!, Colors.green[600]!]
-                    : [Colors.orange[400]!, Colors.orange[600]!],
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: (_isAvailable ? Colors.green : Colors.orange).withOpacity(0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _isAvailable ? '¡Estás disponible!' : 'No disponible',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _isAvailable
-                            ? 'Puedes recibir pedidos'
-                            : 'No recibirás pedidos nuevos',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ElevatedButton(
-                  onPressed: _toggleAvailability,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: _isAvailable ? Colors.green[600] : Colors.orange[600],
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(_isAvailable ? 'Pausar' : 'Activar'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Estadísticas del día
-          Text(
-            'Resumen de Hoy',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Entregas',
-                  '8',
-                  Icons.check_circle,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  'Ganado',
-                  '\$125',
-                  Icons.attach_money,
-                  Colors.green,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Acciones rápidas
-          Text(
-            'Acciones Rápidas',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildQuickAction(
-            'Ver Pedidos Disponibles',
-            'Encuentra nuevos pedidos para entregar',
-            Icons.shopping_bag_outlined,
-            Colors.pink[600]!,
-                () => setState(() => _currentIndex = 1),
-          ),
-          const SizedBox(height: 12),
-          _buildQuickAction(
-            'Mis Pedidos Activos',
-            'Gestiona tus entregas en curso',
-            Icons.delivery_dining,
-            Colors.blue[600]!,
-                () => setState(() => _currentIndex = 2),
-          ),
-          const SizedBox(height: 12),
-          _buildQuickAction(
-            'Ver Ganancias',
-            'Revisa tu historial y pagos',
-            Icons.account_balance_wallet,
-            Colors.green[600]!,
-                () => setState(() => _currentIndex = 3),
-          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 32, color: color),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[700],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickAction(
-      String title,
-      String subtitle,
-      IconData icon,
-      Color color,
-      VoidCallback onTap,
-      ) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey[300]!),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey[400]),
-          ],
-        ),
       ),
     );
   }

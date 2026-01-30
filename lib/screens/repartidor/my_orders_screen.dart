@@ -17,6 +17,15 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
   final _databaseService = DatabaseService();
   final _locationService = LocationService();
 
+  bool _sharingGps = false;
+
+  @override
+  void dispose() {
+    // Si añadiste stopRealtimeTracking(), descomenta:
+    // _locationService.stopRealtimeTracking();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -32,8 +41,11 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Mis Pedidos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    Text('Gestiona tus entregas', style: TextStyle(color: Colors.grey)),
+                    Text('Mis Pedidos',
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.bold)),
+                    Text('Gestiona tus entregas',
+                        style: TextStyle(color: Colors.grey)),
                   ],
                 ),
               ),
@@ -44,24 +56,39 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
           child: StreamBuilder<List<OrderModel>>(
             stream: _databaseService.getRepartidorOrders(widget.repartidor.id),
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
               if (!snapshot.hasData || snapshot.data!.isEmpty) {
                 return const Center(child: Text('No tienes pedidos activos'));
               }
 
-              final activosOrders = snapshot.data!.where((o) => o.status != 'entregado' && o.status != 'cancelado').toList();
-              final completedOrders = snapshot.data!.where((o) => o.status == 'entregado' || o.status == 'cancelado').toList();
+              final activosOrders = snapshot.data!
+                  .where(
+                      (o) => o.status != 'entregado' && o.status != 'cancelado')
+                  .toList();
+              final completedOrders = snapshot.data!
+                  .where(
+                      (o) => o.status == 'entregado' || o.status == 'cancelado')
+                  .toList();
 
               return ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
                   if (activosOrders.isNotEmpty) ...[
-                    const Text('Activos', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ...activosOrders.map((order) => _buildActiveOrderCard(order)),
+                    const Text('Activos',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    ...activosOrders
+                        .map((order) => _buildActiveOrderCard(order)),
                   ],
                   if (completedOrders.isNotEmpty) ...[
-                    const Text('Historial', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ...completedOrders.map((order) => _buildHistoryOrderCard(order)),
+                    const SizedBox(height: 10),
+                    const Text('Historial',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    ...completedOrders
+                        .map((order) => _buildHistoryOrderCard(order)),
                   ],
                 ],
               );
@@ -80,9 +107,14 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
         child: Column(
           children: [
             ListTile(
-              title: Text(order.restaurantName, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text("Cliente: ${order.clientName}\nDir: ${order.deliveryAddress}"),
-              trailing: Text(_getStatusLabel(order.status), style: TextStyle(color: _getStatusColor(order.status))),
+              title: Text(order.restaurantName,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(
+                  "Cliente: ${order.clientName}\nDir: ${order.deliveryAddress}"),
+              trailing: Text(
+                _getStatusLabel(order.status),
+                style: TextStyle(color: _getStatusColor(order.status)),
+              ),
             ),
             _buildActionButtons(order),
           ],
@@ -110,32 +142,58 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
       return Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          ElevatedButton(onPressed: () => _shareLocation(order.id), child: const Text('Compartir GPS')),
-          ElevatedButton(onPressed: () => _updateOrderStatus(order.id, 'entregado'), child: const Text('Entregado')),
+          ElevatedButton(
+            onPressed: () => _toggleGpsRealtime(),
+            child: Text(_sharingGps ? 'Detener GPS' : 'Compartir GPS'),
+          ),
+          ElevatedButton(
+            onPressed: () => _updateOrderStatus(order.id, 'entregado'),
+            child: const Text('Entregado'),
+          ),
         ],
       );
     }
     return const SizedBox.shrink();
   }
 
-  void _updateOrderStatus(String orderId, String status) async {
-    await _databaseService.updateOrderStatus(orderId, status);
+  Future<void> _toggleGpsRealtime() async {
+    try {
+      if (_sharingGps) {
+        // Si añadiste stopRealtimeTracking(), descomenta:
+        // await _locationService.stopRealtimeTracking();
+        setState(() => _sharingGps = false);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('GPS en tiempo real detenido')),
+        );
+        return;
+      }
+
+      // ✅ Tu servicio ya sube realtime a /users/{repartidorId}
+      _locationService.startRealtimeTracking(widget.repartidor.id);
+      setState(() => _sharingGps = true);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Compartiendo ubicación en tiempo real')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error GPS: $e')),
+      );
+    }
   }
 
-  void _shareLocation(String orderId) async {
-    try {
-      final position = await _locationService.getCurrentLocation();
-      if (position != null) {
-        // CORRECCIÓN AQUÍ: Pasando los 3 argumentos requeridos por DatabaseService
-        await _databaseService.updateRepartidorLocation(
-          orderId, 
-          position.latitude, 
-          position.longitude
-        );
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ubicación actualizada')));
-      }
-    } catch (e) {
-      print("Error sharing location: $e");
+  void _updateOrderStatus(String orderId, String status) async {
+    await _databaseService.updateOrderStatus(orderId, status);
+
+    // ✅ Si finaliza, apagamos el sharing (y paramos stream si existe stop)
+    if (status == 'entregado' || status == 'cancelado') {
+      // Si añadiste stopRealtimeTracking(), descomenta:
+      // await _locationService.stopRealtimeTracking();
+      if (mounted) setState(() => _sharingGps = false);
     }
   }
 
