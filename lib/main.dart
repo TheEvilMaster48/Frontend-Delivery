@@ -1,18 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'screens/auth/login_screen.dart';
+import 'services/notificacion_service.dart';
+
+// HANDLER PARA NOTIFICACIONES EN SEGUNDO PLANO (BACKGROUND/TERMINADA)
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print('FCM BACKGROUND: ${message.messageId} DATA=${message.data}');
+}
 
 void main() async {
-  // Asegura que los bindings de Flutter estén listos antes de Firebase
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   try {
-    // Inicialización de Firebase
     await Firebase.initializeApp();
     print("Conexión con Firebase establecida correctamente.");
   } catch (e) {
     print("Error crítico inicializando Firebase: $e");
   }
+
+  // CONFIGURA EL HANDLER DE BACKGROUND UNA SOLA VEZ
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  // INICIALIZA LISTENERS GLOBALES DE FCM (NO DEPENDE DE USUARIO LOGUEADO)
+  NotificationService().setupGlobalListeners();
 
   runApp(const MyApp());
 }
@@ -25,8 +38,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Delivery App',
       debugShowCheckedModeBanner: false,
-      
-      // Configuración de Tema Global
+
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -34,8 +46,6 @@ class MyApp extends StatelessWidget {
           primary: Colors.pink[600],
           secondary: Colors.pinkAccent,
         ),
-        
-        // Estilo global para botones elevados
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.pink[600],
@@ -46,8 +56,6 @@ class MyApp extends StatelessWidget {
             ),
           ),
         ),
-        
-        // Estilo global para campos de texto (Inputs)
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.grey[50],
@@ -60,8 +68,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      
-      // Pantalla inicial
+
       home: const LoginScreen(),
     );
   }

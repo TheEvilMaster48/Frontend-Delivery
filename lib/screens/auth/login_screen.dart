@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../../services/auth_service.dart';
+import '../../services/notificacion_service.dart';
 import '../../models/user_model.dart';
 import '../admin/admin_screen.dart';
 import '../repartidor/repartidor_screen.dart';
@@ -24,6 +25,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // LISTENER PARA MOSTRAR NOTIFICACIONES EN PRIMER PLANO EN ESTA PANTALLA
+    NotificationService().setupForegroundListener((title, body) {
+      if (!mounted) return;
+      NotificationService.showInAppNotification(
+        context,
+        title,
+        body,
+        backgroundColor: Colors.pink[600],
+      );
+    });
+  }
 
   @override
   void dispose() {
@@ -59,6 +76,12 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
         // -----------------------------------
+
+        // INICIALIZAR FCM PARA ESTE USUARIO (GUARDA TOKEN + TOPICS POR ROL)
+        await NotificationService().initialize(
+          userId: user.id,
+          role: user.role,
+        );
 
         _navigateByRole(user);
       } else {

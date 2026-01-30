@@ -43,11 +43,31 @@ dependencies:
 
   # Sensors
   sensors_plus: ^4.0.2
+  flutter_local_notifications: ^20.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.7
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/branding/delivery.jpg
+  remove_alpha_ios: true
+
+flutter_native_splash:
+  color: "#000000"
+  image: assets/branding/delivery.jpg
+  android: true
+  ios: true
+  android_12:
+    color: "#000000"
+    image: assets/branding/delivery.jpg

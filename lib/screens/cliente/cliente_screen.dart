@@ -1,14 +1,90 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_core/firebase_core.dart';
+
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+const AndroidNotificationChannel _highChannel = AndroidNotificationChannel(
+  'high_importance_channel',
+  'Notificaciones',
+  description: 'Notificaciones de pedidos y mensajes',
+  importance: Importance.high,
+);
+
+Future<void> _setupLocalNotifications() async {
+  const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const DarwinInitializationSettings iosInit = DarwinInitializationSettings();
+
+  const InitializationSettings initSettings = InitializationSettings(
+    android: androidInit,
+    iOS: iosInit,
+  );
+
+  // CORRECCION: EN TU VERSION initialize() USA "settings:"
+  await flutterLocalNotificationsPlugin.initialize(settings: initSettings);
+
+  final androidPlugin =
+  flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  if (androidPlugin != null) {
+    await androidPlugin.createNotificationChannel(_highChannel);
+    await androidPlugin.requestNotificationsPermission();
+  }
+
+  final iosPlugin = flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+  if (iosPlugin != null) {
+    await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
+  }
+}
+
+Future<void> _showLocalNotification(RemoteMessage message) async {
+  final String title = message.notification?.title ?? (message.data['title']?.toString() ?? 'Notificacion');
+  final String body = message.notification?.body ?? (message.data['body']?.toString() ?? 'Tienes una nueva notificacion');
+
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'high_importance_channel',
+    'Notificaciones',
+    channelDescription: 'Notificaciones de pedidos y mensajes',
+    importance: Importance.high,
+    priority: Priority.high,
+    playSound: true,
+  );
+
+  const NotificationDetails details = NotificationDetails(android: androidDetails);
+
+  await flutterLocalNotificationsPlugin.show(
+    id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    title: title,
+    body: body,
+    notificationDetails: details,
+    payload: jsonEncode(message.data),
+  );
+}
+
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
+  try {
+    await _setupLocalNotifications();
+    await _showLocalNotification(message);
+  } catch (_) {}
+}
 
 class ClienteScreen extends StatefulWidget {
   final UserModel user;
@@ -26,14 +102,13 @@ class _ClienteScreenState extends State<ClienteScreen> {
   final ScrollController _chatScrollController = ScrollController();
 
   int _currentIndex = 0;
-  Map<String, int> _carrito = {}; // productId: cantidad
-  Map<String, dynamic> _productosInfo = {}; // productId: {nombre, precio, imagen, restaurantId, restaurantName}
+  Map<String, int> _carrito = {};
+  Map<String, dynamic> _productosInfo = {};
   String? _activeOrderId;
   Map<String, dynamic>? _activeOrder;
   StreamSubscription<DatabaseEvent>? _orderSubscription;
   StreamSubscription<DatabaseEvent>? _userSecuritySubscription;
 
-  // Controladores del formulario de checkout
   final _nombresCtrl = TextEditingController();
   final _apellidosCtrl = TextEditingController();
   final _direccionPrincipalCtrl = TextEditingController();
@@ -42,6 +117,27 @@ class _ClienteScreenState extends State<ClienteScreen> {
   final _telefonoCtrl = TextEditingController();
   final _correoCtrl = TextEditingController();
 
+  GoogleMapController? _mapController;
+  LatLng? _repartidorLatLng;
+  String _repartidorAddress = 'Ubicacion no disponible';
+  StreamSubscription<DatabaseEvent>? _repartidorLocationSub;
+  String? _trackingRepartidorId;
+
+  StreamSubscription<RemoteMessage>? _fcmForegroundSub;
+  StreamSubscription<String>? _fcmTokenRefreshSub;
+
+  static bool _pushInitOnce = false;
+
+  bool _ratingDialogOpen = false;
+
+  // ====== AÑADIDO: FOTO PERFIL CLIENTE ======
+  String? _clienteFotoBase64;
+  bool _savingPhoto = false;
+
+  // ====== AÑADIDO: NOTIFICACIONES INTERNAS (LOCAL) ======
+  String? _lastOrderStatus;
+  int? _lastChatNotifiedTs;
+
   @override
   void initState() {
     super.initState();
@@ -49,12 +145,17 @@ class _ClienteScreenState extends State<ClienteScreen> {
     _listenToSecurityStatus();
     _listenToActiveOrder();
     _loadUserProfile();
+    _initPushNotifications();
   }
 
   @override
   void dispose() {
     _orderSubscription?.cancel();
     _userSecuritySubscription?.cancel();
+    _repartidorLocationSub?.cancel();
+    _fcmForegroundSub?.cancel();
+    _fcmTokenRefreshSub?.cancel();
+    _mapController?.dispose();
     _chatCtrl.dispose();
     _chatScrollController.dispose();
     _nombresCtrl.dispose();
@@ -65,6 +166,84 @@ class _ClienteScreenState extends State<ClienteScreen> {
     _telefonoCtrl.dispose();
     _correoCtrl.dispose();
     super.dispose();
+  }
+
+  // ====== AÑADIDO: NOTIFICACION LOCAL SIMPLE (SIN FCM) ======
+  Future<void> _showLocalSimple(String title, String body, {Map<String, dynamic>? data}) async {
+    try {
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        'high_importance_channel',
+        'Notificaciones',
+        channelDescription: 'Notificaciones de pedidos y mensajes',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+      );
+      const NotificationDetails details = NotificationDetails(android: androidDetails);
+
+      await flutterLocalNotificationsPlugin.show(
+        id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: jsonEncode(data ?? {}),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _initPushNotifications() async {
+    try {
+      if (!_pushInitOnce) {
+        _pushInitOnce = true;
+
+        try {
+          FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+        } catch (_) {}
+
+        await _setupLocalNotifications();
+      }
+
+      final messaging = FirebaseMessaging.instance;
+
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+      final token = await messaging.getToken();
+      if (token != null && token.trim().isNotEmpty) {
+        await _dbRef.child('users').child(widget.user.id).update({'fcmToken': token});
+      }
+
+      _fcmTokenRefreshSub?.cancel();
+      _fcmTokenRefreshSub = messaging.onTokenRefresh.listen((newToken) async {
+        if (newToken.trim().isEmpty) return;
+        await _dbRef.child('users').child(widget.user.id).update({'fcmToken': newToken});
+      });
+
+      _fcmForegroundSub?.cancel();
+      _fcmForegroundSub = FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+        if (!mounted) return;
+        await _showLocalNotification(message);
+      });
+
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        if (!mounted) return;
+        final data = message.data;
+
+        if (data['screen'] == 'chat') setState(() => _currentIndex = 3);
+        if (data['screen'] == 'mapa') setState(() => _currentIndex = 2);
+        if (data['screen'] == 'revision') setState(() => _currentIndex = 1);
+        if (data['screen'] == 'perfil') setState(() => _currentIndex = 4);
+      });
+
+      // ====== AÑADIDO: SI ABRE LA APP DESDE NOTIFICACION (TERMINADA) ======
+      final initialMsg = await messaging.getInitialMessage();
+      if (initialMsg != null && mounted) {
+        final data = initialMsg.data;
+        if (data['screen'] == 'chat') setState(() => _currentIndex = 3);
+        if (data['screen'] == 'mapa') setState(() => _currentIndex = 2);
+        if (data['screen'] == 'revision') setState(() => _currentIndex = 1);
+        if (data['screen'] == 'perfil') setState(() => _currentIndex = 4);
+      }
+    } catch (_) {}
   }
 
   void _checkInitialStatus() async {
@@ -91,48 +270,178 @@ class _ClienteScreenState extends State<ClienteScreen> {
         _apellidosCtrl.text = data['apellidos'] ?? '';
         _telefonoCtrl.text = data['telefono'] ?? '';
         _correoCtrl.text = data['correo'] ?? '';
+
+        // ====== AÑADIDO: CARGAR FOTO PERFIL ======
+        final foto = data['foto'];
+        if (foto != null && foto.toString().trim().isNotEmpty) {
+          _clienteFotoBase64 = foto.toString();
+        }
       });
     }
   }
 
   void _listenToActiveOrder() {
-    _orderSubscription = _dbRef.child('orders').orderByChild('clienteId').equalTo(widget.user.id).onValue.listen((event) {
-      if (event.snapshot.value != null) {
-        Map orders = event.snapshot.value as Map;
-        var activeOrders = orders.entries.where((e) {
-          var status = e.value['status'];
-          return status != 'entregado' && status != 'cancelado';
-        }).toList();
+    _orderSubscription =
+        _dbRef.child('orders').orderByChild('clienteId').equalTo(widget.user.id).onValue.listen((event) {
+          if (event.snapshot.value != null) {
+            Map orders = event.snapshot.value as Map;
 
-        if (activeOrders.isNotEmpty) {
-          setState(() {
-            _activeOrderId = activeOrders.first.key;
-            _activeOrder = Map<String, dynamic>.from(activeOrders.first.value);
-          });
+            var activeOrders = orders.entries.where((e) {
+              if (e.value is! Map) return false;
+              final v = Map<String, dynamic>.from(e.value as Map);
+              final status = v['status'];
+              final rated = v['rated'] == true;
+              if (status == 'cancelado') return false;
+              if (status == 'entregado' && rated) return false;
+              return true;
+            }).toList();
 
-          // Si el pedido fue aceptado, mostrar notificacion
-          if (_activeOrder!['status'] == 'aceptado' && _activeOrder!['notifiedAccepted'] != true) {
-            _dbRef.child('orders').child(_activeOrderId!).update({'notifiedAccepted': true});
-            _showOrderAcceptedDialog();
+            if (activeOrders.isNotEmpty) {
+              setState(() {
+                _activeOrderId = activeOrders.first.key;
+                _activeOrder = Map<String, dynamic>.from(activeOrders.first.value);
+              });
+
+              final rid = _activeOrder?['repartidorId']?.toString();
+              if (rid != null && rid.trim().isNotEmpty && rid != _trackingRepartidorId) {
+                _trackingRepartidorId = rid;
+                _startListeningRepartidorLocation(rid);
+              }
+
+              if (_activeOrder!['status'] == 'aceptado' && _activeOrder!['notifiedAccepted'] != true) {
+                _dbRef.child('orders').child(_activeOrderId!).update({'notifiedAccepted': true});
+                _showOrderAcceptedDialog();
+
+                // ====== AÑADIDO: NOTIFICACION LOCAL AL ACEPTAR ======
+                _showLocalSimple(
+                  'Pedido aceptado',
+                  'Tu pedido fue aceptado por ${_activeOrder?['repartidorNombre'] ?? 'un repartidor'}',
+                  data: {'screen': 'mapa', 'orderId': _activeOrderId},
+                );
+              }
+
+              if (_activeOrder!['status'] == 'entregado' && _activeOrder!['rated'] != true) {
+                if (!_ratingDialogOpen) {
+                  _showRatingDialog();
+                }
+              }
+
+              // ====== AÑADIDO: NOTIFICAR CAMBIOS DE ESTADO ======
+              final currentStatus = (_activeOrder?['status'] ?? '').toString();
+              if (currentStatus.isNotEmpty && currentStatus != _lastOrderStatus) {
+                _lastOrderStatus = currentStatus;
+
+                if (currentStatus == 'en_camino') {
+                  _showLocalSimple(
+                    'Tu pedido va en camino',
+                    'El repartidor ya está en ruta.',
+                    data: {'screen': 'mapa', 'orderId': _activeOrderId},
+                  );
+                } else if (currentStatus == 'rechazado') {
+                  _showLocalSimple(
+                    'Pedido rechazado',
+                    'Tu pedido fue rechazado.',
+                    data: {'screen': 'revision', 'orderId': _activeOrderId},
+                  );
+                } else if (currentStatus == 'entregado') {
+                  _showLocalSimple(
+                    'Pedido entregado',
+                    'Tu pedido fue entregado. Puedes calificar al repartidor.',
+                    data: {'screen': 'revision', 'orderId': _activeOrderId},
+                  );
+                }
+              }
+            } else {
+              setState(() {
+                _activeOrderId = null;
+                _activeOrder = null;
+                _repartidorLatLng = null;
+                _repartidorAddress = 'Ubicacion no disponible';
+              });
+              _repartidorLocationSub?.cancel();
+              _trackingRepartidorId = null;
+
+              // ====== AÑADIDO ======
+              _lastOrderStatus = null;
+              _lastChatNotifiedTs = null;
+            }
+          } else {
+            setState(() {
+              _activeOrderId = null;
+              _activeOrder = null;
+              _repartidorLatLng = null;
+              _repartidorAddress = 'Ubicacion no disponible';
+            });
+            _repartidorLocationSub?.cancel();
+            _trackingRepartidorId = null;
+
+            // ====== AÑADIDO ======
+            _lastOrderStatus = null;
+            _lastChatNotifiedTs = null;
           }
-
-          // Si el pedido fue entregado, mostrar dialogo de calificacion
-          if (_activeOrder!['status'] == 'entregado' && _activeOrder!['rated'] != true) {
-            _showRatingDialog();
-          }
-        } else {
-          setState(() {
-            _activeOrderId = null;
-            _activeOrder = null;
-          });
-        }
-      } else {
-        setState(() {
-          _activeOrderId = null;
-          _activeOrder = null;
         });
+  }
+
+  void _startListeningRepartidorLocation(String repartidorId) {
+    _repartidorLocationSub?.cancel();
+
+    final ref1 = _dbRef.child('repartidores_locations').child(repartidorId);
+    final ref2 = _dbRef.child('locations').child('repartidores').child(repartidorId);
+
+    _repartidorLocationSub = ref1.onValue.listen((event) async {
+      if (event.snapshot.value == null) {
+        _repartidorLocationSub?.cancel();
+        _repartidorLocationSub = ref2.onValue.listen((e2) async {
+          if (e2.snapshot.value == null) return;
+          final data = Map<String, dynamic>.from(e2.snapshot.value as Map);
+          final lat = (data['lat'] as num?)?.toDouble();
+          final lng = (data['lng'] as num?)?.toDouble();
+          if (lat == null || lng == null) return;
+
+          final pos = LatLng(lat, lng);
+          if (!mounted) return;
+
+          setState(() => _repartidorLatLng = pos);
+          await _reverseGeocodeRepartidor(pos);
+
+          if (_mapController != null && _currentIndex == 2) {
+            _mapController!.animateCamera(CameraUpdate.newLatLng(pos));
+          }
+        });
+        return;
+      }
+
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final lat = (data['lat'] as num?)?.toDouble();
+      final lng = (data['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) return;
+
+      final pos = LatLng(lat, lng);
+      if (!mounted) return;
+
+      setState(() => _repartidorLatLng = pos);
+      await _reverseGeocodeRepartidor(pos);
+
+      if (_mapController != null && _currentIndex == 2) {
+        _mapController!.animateCamera(CameraUpdate.newLatLng(pos));
       }
     });
+  }
+
+  Future<void> _reverseGeocodeRepartidor(LatLng pos) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+        final parts = <String>[
+          if ((p.street ?? '').trim().isNotEmpty) p.street!.trim(),
+          if ((p.subLocality ?? '').trim().isNotEmpty) p.subLocality!.trim(),
+          if ((p.locality ?? '').trim().isNotEmpty) p.locality!.trim(),
+        ];
+        if (!mounted) return;
+        setState(() => _repartidorAddress = parts.isEmpty ? 'Ubicacion no disponible' : parts.join(', '));
+      }
+    } catch (_) {}
   }
 
   void _showOrderAcceptedDialog() {
@@ -159,14 +468,15 @@ class _ClienteScreenState extends State<ClienteScreen> {
             const SizedBox(height: 15),
             Text('Tu pedido ha sido aceptado por ${_activeOrder?['repartidorNombre'] ?? 'un repartidor'}'),
             const SizedBox(height: 10),
-            const Text('Puedes ver su ubicacion en el mapa y chatear con el.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+            const Text('Puedes ver su ubicacion en el mapa y chatear con el.',
+                textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
           ],
         ),
         actions: [
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              setState(() => _currentIndex = 2); // Ir al mapa
+              setState(() => _currentIndex = 2);
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             child: const Text('VER EN MAPA', style: TextStyle(color: Colors.white)),
@@ -177,73 +487,141 @@ class _ClienteScreenState extends State<ClienteScreen> {
   }
 
   void _showRatingDialog() {
+    _ratingDialogOpen = true;
+
     int stars = 5;
     final commentCtrl = TextEditingController();
 
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Califica tu experiencia', textAlign: TextAlign.center),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_activeOrder?['repartidorFoto'] != null)
-                CircleAvatar(
-                  radius: 40,
-                  backgroundImage: MemoryImage(base64Decode(_activeOrder!['repartidorFoto'])),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final bottomInset = MediaQuery.of(dialogContext).viewInsets.bottom;
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            scrollable: true,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+            title: const Text('Califique a su Repartidor', textAlign: TextAlign.center),
+            content: Padding(
+              padding: EdgeInsets.only(bottom: bottomInset > 0 ? 8 : 0),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(dialogContext).size.height * 0.55,
                 ),
-              const SizedBox(height: 10),
-              Text(_activeOrder?['repartidorNombre'] ?? 'Repartidor', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(5, (i) => GestureDetector(
-                  onTap: () => setDialogState(() => stars = i + 1),
-                  child: Icon(i < stars ? Icons.star : Icons.star_border, color: Colors.amber, size: 40),
-                )),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_activeOrder?['repartidorFoto'] != null)
+                        CircleAvatar(
+                          radius: 40,
+                          backgroundImage: MemoryImage(base64Decode(_activeOrder!['repartidorFoto'])),
+                        ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _activeOrder?['repartidorNombre'] ?? 'Repartidor',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(
+                          5,
+                              (i) => GestureDetector(
+                            onTap: () => setDialogState(() => stars = i + 1),
+                            child: Icon(
+                              i < stars ? Icons.star : Icons.star_border,
+                              color: Colors.amber,
+                              size: 40,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: commentCtrl,
+                        maxLines: 3,
+                        decoration: InputDecoration(
+                          hintText: 'Comentarios (opcional)',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: commentCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: 'Deja un comentario (opcional)',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            actions: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    try {
+                      if (_activeOrderId == null) return;
+
+                      await _dbRef.child('ratings').push().set({
+                        'orderId': _activeOrderId,
+                        'clienteId': widget.user.id,
+                        'repartidorId': _activeOrder?['repartidorId'],
+                        'stars': stars,
+                        'comment': commentCtrl.text,
+                        'timestamp': ServerValue.timestamp,
+                      });
+
+                      await _dbRef.child('orders').child(_activeOrderId!).update({
+                        'rated': true,
+                        'status': 'entregado',
+                      });
+
+                      _ratingDialogOpen = false;
+
+                      if (Navigator.canPop(dialogContext)) {
+                        Navigator.pop(dialogContext);
+                      }
+
+                      if (!mounted) return;
+                      setState(() => _currentIndex = 4);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Calificacion enviada correctamente'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } catch (e) {
+                      _ratingDialogOpen = false;
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error al enviar calificacion: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.pink[600]),
+                  child: const Text('ENVIAR CALIFICACION', style: TextStyle(color: Colors.white)),
                 ),
               ),
             ],
-          ),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () async {
-                  await _dbRef.child('ratings').push().set({
-                    'orderId': _activeOrderId,
-                    'clienteId': widget.user.id,
-                    'repartidorId': _activeOrder?['repartidorId'],
-                    'stars': stars,
-                    'comment': commentCtrl.text,
-                    'timestamp': ServerValue.timestamp,
-                  });
-                  await _dbRef.child('orders').child(_activeOrderId!).update({'rated': true, 'status': 'entregado'});
-                  if (mounted) Navigator.pop(context);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.pink[600]),
-                child: const Text('ENVIAR CALIFICACION', style: TextStyle(color: Colors.white)),
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
-    );
+    ).then((_) {
+      _ratingDialogOpen = false;
+    });
   }
 
   void _handleLogout({bool forced = false}) async {
     await _authService.logout();
+    try {
+      await _dbRef.child('users').child(widget.user.id).update({'fcmToken': null});
+    } catch (_) {}
+
     if (!mounted) return;
 
     Navigator.pushAndRemoveUntil(
@@ -267,7 +645,12 @@ class _ClienteScreenState extends State<ClienteScreen> {
                   child: const Icon(Icons.block, color: Colors.red, size: 24),
                 ),
                 const SizedBox(width: 10),
-                const Flexible(child: Text('ACCESO DENEGADO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red))),
+                const Flexible(
+                  child: Text(
+                    'ACCESO DENEGADO',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red),
+                  ),
+                ),
               ],
             ),
             content: const Column(
@@ -277,7 +660,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
                 SizedBox(height: 10),
                 Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 50),
                 SizedBox(height: 15),
-                Text('Su cuenta ha sido bloqueada. Contacte al administrador. Gracias', textAlign: TextAlign.center, style: TextStyle(fontSize: 16)),
+                Text(
+                  'Su cuenta ha sido bloqueada. Contacte al administrador. Gracias',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16),
+                ),
               ],
             ),
             actions: [
@@ -285,7 +672,10 @@ class _ClienteScreenState extends State<ClienteScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(vertical: 12)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
                   child: const Text('ENTENDIDO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -318,7 +708,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
       };
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${productData['nombre']} agregado al carrito'), duration: const Duration(seconds: 1), backgroundColor: Colors.green),
+      SnackBar(
+        content: Text('${productData['nombre']} agregado al carrito'),
+        duration: const Duration(seconds: 1),
+        backgroundColor: Colors.green,
+      ),
     );
   }
 
@@ -339,7 +733,9 @@ class _ClienteScreenState extends State<ClienteScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Permiso de ubicacion denegado'), backgroundColor: Colors.red));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Permiso de ubicacion denegado'), backgroundColor: Colors.red),
+          );
           return;
         }
       }
@@ -350,13 +746,17 @@ class _ClienteScreenState extends State<ClienteScreen> {
         _direccionSecundariaCtrl.text = 'Lng: ${position.longitude.toStringAsFixed(6)}';
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al obtener ubicacion: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al obtener ubicacion: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 
   void _mostrarCheckout() {
     if (_carrito.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tu carrito esta vacio'), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tu carrito esta vacio'), backgroundColor: Colors.orange),
+      );
       return;
     }
 
@@ -366,7 +766,12 @@ class _ClienteScreenState extends State<ClienteScreen> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 20,
+          ),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -374,8 +779,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
               children: [
                 const Text('Finalizar Pedido', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 20),
-
-                // Resumen del carrito
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
@@ -399,17 +802,18 @@ class _ClienteScreenState extends State<ClienteScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text('TOTAL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                          Text('\$${_calcularTotal().toStringAsFixed(2)}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green[700])),
+                          Text(
+                            '\$${_calcularTotal().toStringAsFixed(2)}',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green[700]),
+                          ),
                         ],
                       ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 20),
                 const Text('Datos de Entrega', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 const SizedBox(height: 10),
-
                 TextField(controller: _nombresCtrl, decoration: const InputDecoration(labelText: 'Nombres', prefixIcon: Icon(Icons.person))),
                 const SizedBox(height: 10),
                 TextField(controller: _apellidosCtrl, decoration: const InputDecoration(labelText: 'Apellidos', prefixIcon: Icon(Icons.person_outline))),
@@ -418,7 +822,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
                 const SizedBox(height: 10),
                 TextField(controller: _direccionSecundariaCtrl, decoration: const InputDecoration(labelText: 'Direccion Secundaria', prefixIcon: Icon(Icons.location_city))),
                 const SizedBox(height: 10),
-
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
@@ -427,21 +830,30 @@ class _ClienteScreenState extends State<ClienteScreen> {
                     label: const Text('Usar ubicacion actual'),
                   ),
                 ),
-
                 const SizedBox(height: 10),
                 TextField(controller: _referenciaCtrl, decoration: const InputDecoration(labelText: 'Referencia', prefixIcon: Icon(Icons.note))),
                 const SizedBox(height: 10),
-                TextField(controller: _telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono', prefixIcon: Icon(Icons.phone)), keyboardType: TextInputType.phone),
+                TextField(
+                  controller: _telefonoCtrl,
+                  decoration: const InputDecoration(labelText: 'Telefono', prefixIcon: Icon(Icons.phone)),
+                  keyboardType: TextInputType.phone,
+                ),
                 const SizedBox(height: 10),
-                TextField(controller: _correoCtrl, decoration: const InputDecoration(labelText: 'Correo Electronico', prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
-
+                TextField(
+                  controller: _correoCtrl,
+                  decoration: const InputDecoration(labelText: 'Correo Electronico', prefixIcon: Icon(Icons.email)),
+                  keyboardType: TextInputType.emailAddress,
+                ),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () => _procesarPedido(context),
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(vertical: 15)),
-                    child: const Text('FINALIZAR PAGO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    child: const Text(
+                      'FINALIZAR PAGO',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 30),
@@ -455,13 +867,14 @@ class _ClienteScreenState extends State<ClienteScreen> {
 
   Future<void> _procesarPedido(BuildContext modalContext) async {
     if (_nombresCtrl.text.isEmpty || _direccionPrincipalCtrl.text.isEmpty || _telefonoCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Completa los campos obligatorios'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Completa los campos obligatorios'), backgroundColor: Colors.red),
+      );
       return;
     }
 
     Navigator.pop(modalContext);
 
-    // Obtener info del restaurante del primer producto
     String? restaurantId;
     String? restaurantName;
     String? restaurantImg;
@@ -475,7 +888,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
       productName = firstProduct['nombre'];
       productImg = firstProduct['imagen'];
 
-      // Obtener imagen del restaurante
       final resSnap = await _dbRef.child('restaurants').child(restaurantId!).get();
       if (resSnap.exists) {
         Map resData = resSnap.value as Map;
@@ -483,7 +895,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
       }
     }
 
-    // CREAR LA ORDEN - SIN nextRepartidorId para que TODOS los repartidores la vean
     final orderRef = _dbRef.child('orders').push();
     await orderRef.set({
       'clienteId': widget.user.id,
@@ -498,21 +909,30 @@ class _ClienteScreenState extends State<ClienteScreen> {
       'restaurantImg': restaurantImg,
       'productName': productName,
       'productImg': productImg,
-      'productos': _carrito.map((k, v) => MapEntry(k, {'cantidad': v, 'nombre': _productosInfo[k]?['nombre'], 'precio': _productosInfo[k]?['precio']})),
+      'productos': _carrito.map((k, v) => MapEntry(k, {
+        'cantidad': v,
+        'nombre': _productosInfo[k]?['nombre'],
+        'precio': _productosInfo[k]?['precio'],
+      })),
       'total': _calcularTotal(),
       'status': 'pendiente',
-      'repartidorId': null, // SIN REPARTIDOR ASIGNADO - CUALQUIER REPARTIDOR PUEDE TOMARLO
+      'repartidorId': null,
       'timestamp': ServerValue.timestamp,
     });
 
-    // Limpiar carrito
     setState(() {
       _carrito.clear();
       _productosInfo.clear();
     });
 
-    // Mostrar dialogo de confirmacion
     _showOrderProcessedDialog();
+
+    // ====== AÑADIDO: NOTIFICACION LOCAL CUANDO CREA PEDIDO ======
+    _showLocalSimple(
+      'Pedido procesado',
+      'Tu pedido fue enviado. Esperando a un repartidor...',
+      data: {'screen': 'revision', 'orderId': orderRef.key},
+    );
   }
 
   void _showOrderProcessedDialog() {
@@ -541,7 +961,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
             child: ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
-                setState(() => _currentIndex = 1); // Ir a revision del pedido
+                setState(() => _currentIndex = 1);
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               child: const Text('VER ESTADO', style: TextStyle(color: Colors.white)),
@@ -568,11 +988,15 @@ class _ClienteScreenState extends State<ClienteScreen> {
                   onPressed: _mostrarCheckout,
                 ),
                 Positioned(
-                  right: 8, top: 8,
+                  right: 8,
+                  top: 8,
                   child: Container(
                     padding: const EdgeInsets.all(4),
                     decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                    child: Text('${_carrito.values.fold(0, (a, b) => a + b)}', style: const TextStyle(color: Colors.white, fontSize: 10)),
+                    child: Text(
+                      '${_carrito.values.fold(0, (a, b) => a + b)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                    ),
                   ),
                 ),
               ],
@@ -608,23 +1032,35 @@ class _ClienteScreenState extends State<ClienteScreen> {
 
   String _getTitle() {
     switch (_currentIndex) {
-      case 0: return 'Restaurantes';
-      case 1: return 'Estado del Pedido';
-      case 2: return 'Mapa de Entrega';
-      case 3: return 'Chat';
-      case 4: return 'Mi Perfil';
-      default: return 'Delivery App';
+      case 0:
+        return 'Restaurantes';
+      case 1:
+        return 'Estado del Pedido';
+      case 2:
+        return 'Mapa de Entrega';
+      case 3:
+        return 'Chat';
+      case 4:
+        return 'Mi Perfil';
+      default:
+        return 'Delivery App';
     }
   }
 
   Widget _buildBody() {
     switch (_currentIndex) {
-      case 0: return _buildRestaurantesView();
-      case 1: return _buildRevisionView();
-      case 2: return _buildMapaView();
-      case 3: return _buildChatView();
-      case 4: return _buildPerfilView();
-      default: return _buildRestaurantesView();
+      case 0:
+        return _buildRestaurantesView();
+      case 1:
+        return _buildRevisionView();
+      case 2:
+        return _buildMapaView();
+      case 3:
+        return _buildChatView();
+      case 4:
+        return _buildPerfilView();
+      default:
+        return _buildRestaurantesView();
     }
   }
 
@@ -690,15 +1126,13 @@ class _ClienteScreenState extends State<ClienteScreen> {
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      // Imagen redonda
                       Container(
-                        width: 80, height: 80,
+                        width: 80,
+                        height: 80,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.grey[200],
-                          image: imagen.isNotEmpty
-                              ? DecorationImage(image: MemoryImage(base64Decode(imagen)), fit: BoxFit.cover)
-                              : null,
+                          image: imagen.isNotEmpty ? DecorationImage(image: MemoryImage(base64Decode(imagen)), fit: BoxFit.cover) : null,
                         ),
                         child: imagen.isEmpty ? const Icon(Icons.restaurant, size: 40, color: Colors.grey) : null,
                       ),
@@ -737,7 +1171,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
         expand: false,
         builder: (context, scrollController) => Column(
           children: [
-            // Header del restaurante
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -747,13 +1180,12 @@ class _ClienteScreenState extends State<ClienteScreen> {
               child: Row(
                 children: [
                   Container(
-                    width: 70, height: 70,
+                    width: 70,
+                    height: 70,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.white,
-                      image: restaurantImg.isNotEmpty
-                          ? DecorationImage(image: MemoryImage(base64Decode(restaurantImg)), fit: BoxFit.cover)
-                          : null,
+                      image: restaurantImg.isNotEmpty ? DecorationImage(image: MemoryImage(base64Decode(restaurantImg)), fit: BoxFit.cover) : null,
                     ),
                     child: restaurantImg.isEmpty ? const Icon(Icons.restaurant, size: 35, color: Colors.grey) : null,
                   ),
@@ -774,8 +1206,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
                 ],
               ),
             ),
-
-            // Lista de productos
             Expanded(
               child: StreamBuilder(
                 stream: _dbRef.child('products').orderByChild('restaurantId').equalTo(restaurantId).onValue,
@@ -815,15 +1245,13 @@ class _ClienteScreenState extends State<ClienteScreen> {
                           padding: const EdgeInsets.all(12),
                           child: Row(
                             children: [
-                              // Imagen del producto
                               Container(
-                                width: 70, height: 70,
+                                width: 70,
+                                height: 70,
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(10),
                                   color: Colors.grey[200],
-                                  image: imagen.isNotEmpty
-                                      ? DecorationImage(image: MemoryImage(base64Decode(imagen)), fit: BoxFit.cover)
-                                      : null,
+                                  image: imagen.isNotEmpty ? DecorationImage(image: MemoryImage(base64Decode(imagen)), fit: BoxFit.cover) : null,
                                 ),
                                 child: imagen.isEmpty ? const Icon(Icons.fastfood, color: Colors.grey) : null,
                               ),
@@ -835,11 +1263,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
                                     Text(nombre, style: const TextStyle(fontWeight: FontWeight.bold)),
                                     Text(descripcion, style: TextStyle(color: Colors.grey[600], fontSize: 12), maxLines: 2),
                                     const SizedBox(height: 4),
-                                    Text('\$${precio.toStringAsFixed(2)}', style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.bold)),
+                                    Text('\$${precio.toStringAsFixed(2)}',
+                                        style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.bold)),
                                   ],
                                 ),
                               ),
-                              // Controles de cantidad
                               Column(
                                 children: [
                                   Row(
@@ -920,6 +1348,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
         statusIcon = Icons.delivery_dining;
         statusText = 'EN CAMINO';
         break;
+      case 'entregado':
+        statusColor = Colors.purple;
+        statusIcon = Icons.verified;
+        statusText = 'ENTREGADO';
+        break;
       default:
         statusColor = Colors.grey;
         statusIcon = Icons.help;
@@ -930,7 +1363,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          // Estado del pedido
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(30),
@@ -947,20 +1379,19 @@ class _ClienteScreenState extends State<ClienteScreen> {
                 if (status == 'pendiente')
                   const Padding(
                     padding: EdgeInsets.only(top: 10),
-                    child: Text('Esperando que un repartidor acepte tu pedido...', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+                    child: Text('Esperando que un repartidor acepte tu pedido...',
+                        textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
                   ),
-                if (status == 'aceptado' && _activeOrder!['repartidorNombre'] != null)
+                if ((status == 'aceptado' || status == 'en_camino' || status == 'entregado') && _activeOrder!['repartidorNombre'] != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),
-                    child: Text('Repartidor: ${_activeOrder!['repartidorNombre']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    child: Text('Repartidor: ${_activeOrder!['repartidorNombre']}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
               ],
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // Detalles del pedido
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
             child: Padding(
@@ -987,7 +1418,8 @@ class _ClienteScreenState extends State<ClienteScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text('Total:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                      Text('\$${(_activeOrder!['total'] ?? 0).toStringAsFixed(2)}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green[700])),
+                      Text('\$${(_activeOrder!['total'] ?? 0).toStringAsFixed(2)}',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green[700])),
                     ],
                   ),
                 ],
@@ -1000,7 +1432,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
   }
 
   Widget _buildMapaView() {
-    if (_activeOrder == null || _activeOrder!['status'] != 'aceptado') {
+    if (_activeOrder == null || (_activeOrder!['status'] != 'aceptado' && _activeOrder!['status'] != 'en_camino')) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1008,9 +1440,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
             Icon(Icons.map, size: 80, color: Colors.grey[300]),
             const SizedBox(height: 16),
             Text(
-              _activeOrder == null
-                  ? 'No tienes pedidos activos'
-                  : 'El mapa estara disponible cuando un repartidor acepte tu pedido',
+              _activeOrder == null ? 'No tienes pedidos activos' : 'El mapa estara disponible cuando un repartidor acepte tu pedido',
               style: TextStyle(color: Colors.grey[600]),
               textAlign: TextAlign.center,
             ),
@@ -1019,47 +1449,57 @@ class _ClienteScreenState extends State<ClienteScreen> {
       );
     }
 
-    return Stack(
-      children: [
-        // Mapa placeholder
-        Container(
-          color: Colors.blue[50],
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.delivery_dining, size: 100, color: Colors.pink),
-                const SizedBox(height: 20),
-                Text('Repartidor: ${_activeOrder!['repartidorNombre']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const Text('En camino a tu ubicacion...', style: TextStyle(color: Colors.grey)),
-              ],
-            ),
+    final initial = _repartidorLatLng ?? const LatLng(-2.90055, -79.00453);
+    final markers = <Marker>{};
+
+    if (_repartidorLatLng != null) {
+      markers.add(
+        Marker(
+          markerId: const MarkerId('repartidor'),
+          position: _repartidorLatLng!,
+          infoWindow: InfoWindow(
+            title: _activeOrder?['repartidorNombre'] ?? 'Repartidor',
+            snippet: _repartidorAddress,
           ),
         ),
-        // Info card
+      );
+    }
+
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: CameraPosition(target: initial, zoom: 16),
+          mapType: MapType.satellite,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
+          zoomControlsEnabled: false,
+          markers: markers,
+          onMapCreated: (c) => _mapController = c,
+        ),
         Positioned(
-          bottom: 20, left: 20, right: 20,
+          top: 12,
+          left: 12,
+          right: 12,
           child: Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  if (_activeOrder!['repartidorFoto'] != null)
-                    CircleAvatar(
-                      radius: 25,
-                      backgroundImage: MemoryImage(base64Decode(_activeOrder!['repartidorFoto'])),
-                    )
-                  else
-                    const CircleAvatar(radius: 25, child: Icon(Icons.person)),
-                  const SizedBox(width: 12),
+                  const Icon(Icons.gps_fixed, color: Colors.pink),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(_activeOrder!['repartidorNombre'] ?? 'Repartidor', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        const Text('Tu pedido esta en camino', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(_activeOrder?['repartidorNombre'] ?? 'Repartidor', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          _repartidorLatLng == null ? 'Buscando ubicacion del repartidor...' : _repartidorAddress,
+                          style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ),
                   ),
@@ -1077,7 +1517,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
   }
 
   Widget _buildChatView() {
-    if (_activeOrder == null || _activeOrder!['status'] != 'aceptado') {
+    if (_activeOrder == null || (_activeOrder!['status'] != 'aceptado' && _activeOrder!['status'] != 'en_camino')) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1085,9 +1525,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
             Icon(Icons.chat_bubble_outline, size: 80, color: Colors.grey[300]),
             const SizedBox(height: 16),
             Text(
-              _activeOrder == null
-                  ? 'No tienes pedidos activos'
-                  : 'El chat se habilitara cuando un repartidor acepte tu pedido',
+              _activeOrder == null ? 'No tienes pedidos activos' : 'El chat se habilitara cuando un repartidor acepte tu pedido',
               style: TextStyle(color: Colors.grey[600]),
               textAlign: TextAlign.center,
             ),
@@ -1098,7 +1536,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
 
     return Column(
       children: [
-        // Header del chat
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)]),
@@ -1121,8 +1558,6 @@ class _ClienteScreenState extends State<ClienteScreen> {
             ],
           ),
         ),
-
-        // Mensajes
         Expanded(
           child: StreamBuilder(
             stream: _dbRef.child('chats').child(_activeOrderId!).onValue,
@@ -1133,20 +1568,57 @@ class _ClienteScreenState extends State<ClienteScreen> {
               Map msgs = snap.data!.snapshot.value as Map;
               var list = msgs.entries.toList()..sort((a, b) => (a.value['t'] ?? 0).compareTo(b.value['t'] ?? 0));
 
+              // ====== AÑADIDO: NOTIFICAR MENSAJE NUEVO SI NO ESTAS EN CHAT ======
+              try {
+                if (list.isNotEmpty) {
+                  final last = Map<String, dynamic>.from(list.last.value as Map);
+                  final int? ts = (last['t'] is int) ? last['t'] as int : null;
+                  final sender = (last['s'] ?? '').toString();
+
+                  if (ts != null &&
+                      sender.isNotEmpty &&
+                      sender != widget.user.id &&
+                      _currentIndex != 3 &&
+                      (_lastChatNotifiedTs == null || ts > _lastChatNotifiedTs!)) {
+                    _lastChatNotifiedTs = ts;
+
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _showLocalSimple(
+                        'Nuevo mensaje',
+                        'Te escribió ${_activeOrder?['repartidorNombre'] ?? 'el repartidor'}',
+                        data: {'screen': 'chat', 'orderId': _activeOrderId},
+                      );
+                    });
+                  }
+                }
+              } catch (_) {}
+
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_chatScrollController.hasClients) {
+                  _chatScrollController.animateTo(
+                    _chatScrollController.position.maxScrollExtent,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                  );
+                }
+              });
+
               return ListView.builder(
                 controller: _chatScrollController,
                 padding: const EdgeInsets.all(15),
                 itemCount: list.length,
                 itemBuilder: (context, i) {
-                  bool isMe = list[i].value['s'] == widget.user.id;
-                  return _bubbleChat(list[i].value['m'], isMe, list[i].value['t']);
+                  final m = Map<String, dynamic>.from(list[i].value as Map);
+                  bool isMe = m['s'] == widget.user.id;
+                  final msg = (m['m'] ?? '').toString();
+                  final time = m['t'];
+                  final img = m['img'];
+                  return _bubbleChat(msg, isMe, time, img);
                 },
               );
             },
           ),
         ),
-
-        // Input
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           color: Colors.white,
@@ -1177,7 +1649,9 @@ class _ClienteScreenState extends State<ClienteScreen> {
     );
   }
 
-  Widget _bubbleChat(String msg, bool isMe, dynamic time) {
+  Widget _bubbleChat(String msg, bool isMe, dynamic time, dynamic imgBase64) {
+    final hasImg = imgBase64 != null && imgBase64.toString().trim().isNotEmpty;
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -1196,7 +1670,18 @@ class _ClienteScreenState extends State<ClienteScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text(msg, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
+            if (hasImg)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  base64Decode(imgBase64.toString()),
+                  width: 220,
+                  height: 220,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else
+              Text(msg, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
             const SizedBox(height: 4),
             Text(
               time != null ? DateFormat('HH:mm').format(DateTime.fromMillisecondsSinceEpoch(time)) : '',
@@ -1256,21 +1741,97 @@ class _ClienteScreenState extends State<ClienteScreen> {
     );
   }
 
+  // ====== AÑADIDO: EDITAR FOTO PERFIL ======
+  Future<void> _editarFotoPerfil() async {
+    try {
+      if (_savingPhoto) return;
+      setState(() => _savingPhoto = true);
+
+      final XFile? image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 55);
+      if (image == null) {
+        if (mounted) setState(() => _savingPhoto = false);
+        return;
+      }
+
+      final bytes = await File(image.path).readAsBytes();
+      final base64Img = base64Encode(bytes);
+
+      await _dbRef.child('users').child(widget.user.id).update({'foto': base64Img});
+
+      if (!mounted) return;
+      setState(() {
+        _clienteFotoBase64 = base64Img;
+        _savingPhoto = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Foto actualizada correctamente'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _savingPhoto = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al actualizar foto: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Widget _buildPerfilView() {
+    final hasFoto = _clienteFotoBase64 != null && _clienteFotoBase64!.trim().isNotEmpty;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
           const SizedBox(height: 20),
-          const CircleAvatar(
-            radius: 60,
-            backgroundColor: Colors.pink,
-            child: Icon(Icons.person, size: 70, color: Colors.white),
+
+          // ====== AÑADIDO: MARCO PERFIL CON FOTO Y LAPIZ A LA DERECHA ======
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 50,
+                    backgroundColor: Colors.pink,
+                    backgroundImage: hasFoto ? MemoryImage(base64Decode(_clienteFotoBase64!)) : null,
+                    child: !hasFoto ? const Icon(Icons.person, size: 55, color: Colors.white) : null,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.user.username, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        const Text('Cliente', style: TextStyle(color: Colors.grey)),
+                        if (_savingPhoto) const SizedBox(height: 8),
+                        if (_savingPhoto)
+                          const Text('Guardando foto...', style: TextStyle(color: Colors.blue, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: ElevatedButton(
+                      onPressed: _savingPhoto ? null : _editarFotoPerfil,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: const Icon(Icons.edit, color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 15),
-          Text(widget.user.username, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const Text('Cliente', style: TextStyle(color: Colors.grey)),
-          const SizedBox(height: 30),
+
+          const SizedBox(height: 18),
 
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -1286,9 +1847,17 @@ class _ClienteScreenState extends State<ClienteScreen> {
                   const SizedBox(height: 15),
                   TextField(controller: _apellidosCtrl, decoration: const InputDecoration(labelText: 'Apellidos', prefixIcon: Icon(Icons.person_outline))),
                   const SizedBox(height: 15),
-                  TextField(controller: _correoCtrl, decoration: const InputDecoration(labelText: 'Correo Electronico', prefixIcon: Icon(Icons.email)), keyboardType: TextInputType.emailAddress),
+                  TextField(
+                    controller: _correoCtrl,
+                    decoration: const InputDecoration(labelText: 'Correo Electronico', prefixIcon: Icon(Icons.email)),
+                    keyboardType: TextInputType.emailAddress,
+                  ),
                   const SizedBox(height: 15),
-                  TextField(controller: _telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono', prefixIcon: Icon(Icons.phone)), keyboardType: TextInputType.phone),
+                  TextField(
+                    controller: _telefonoCtrl,
+                    decoration: const InputDecoration(labelText: 'Telefono', prefixIcon: Icon(Icons.phone)),
+                    keyboardType: TextInputType.phone,
+                  ),
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
