@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart'; // Añadido para verificar status
+import 'package:firebase_database/firebase_database.dart'; 
 import '../../services/auth_service.dart';
 import '../../models/user_model.dart';
 import '../admin/admin_screen.dart';
@@ -17,7 +17,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
-  final _dbRef = FirebaseDatabase.instance.ref(); // Referencia a DB
+  final _dbRef = FirebaseDatabase.instance.ref(); 
   
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -46,23 +46,23 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (user != null) {
-        // --- NUEVA LÓGICA DE SEGURIDAD PARA BLOQUEADOS ---
+        // --- LÓGICA DE SEGURIDAD CRÍTICA ---
+        // Verificamos si el campo status es 'blocked' antes de navegar
         final snapshot = await _dbRef.child('users').child(user.id).child('status').get();
         
-        if (snapshot.exists && snapshot.value == 'blocked') {
-          await _authService.logout(); // Cerramos la sesión de Firebase
+        if (snapshot.exists && snapshot.value.toString() == 'blocked') {
+          await _authService.logout(); 
           if (!mounted) return;
           
           _showErrorDialog(
-            'ACCESO DENEGADO', 
-            'Tu cuenta ha sido bloqueada por el administrador. No puedes iniciar sesión.'
+            'CUENTA BLOQUEADA', 
+            'Tu acceso ha sido restringido por el administrador.'
           );
           setState(() => _isLoading = false);
           return;
         }
-        // ------------------------------------------------
+        // -----------------------------------
 
-        // Redirección estricta por rol (solo si no está bloqueado)
         _navigateByRole(user);
       } else {
         _showErrorSnackBar('Usuario o contraseña incorrectos');
@@ -75,7 +75,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Nueva función para mostrar un diálogo de error más formal para bloqueos
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
@@ -84,7 +83,7 @@ class _LoginScreenState extends State<LoginScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: Row(
           children: [
-            const Icon(Icons.error_outline, color: Colors.red),
+            const Icon(Icons.security, color: Colors.red),
             const SizedBox(width: 10),
             Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
@@ -93,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('ENTENDIDO', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: const Text('OK', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           )
         ],
       ),
@@ -102,11 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red, behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -115,24 +110,13 @@ class _LoginScreenState extends State<LoginScreen> {
     final String role = user.role.toLowerCase().trim();
 
     switch (role) {
-      case 'administrador':
-        nextScreen = AdminScreen(user: user);
-        break;
-      case 'repartidor':
-        nextScreen = RepartidorScreen(user: user);
-        break;
-      case 'cliente':
-        nextScreen = ClienteScreen(user: user);
-        break;
-      default:
-        nextScreen = ClienteScreen(user: user);
-        break;
+      case 'administrador': nextScreen = AdminScreen(user: user); break;
+      case 'repartidor': nextScreen = RepartidorScreen(user: user); break;
+      case 'cliente': nextScreen = ClienteScreen(user: user); break;
+      default: nextScreen = ClienteScreen(user: user); break;
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => nextScreen),
-    );
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => nextScreen));
   }
 
   @override
@@ -150,18 +134,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 60),
                 Icon(Icons.delivery_dining, size: 100, color: Colors.pink[600]),
                 const SizedBox(height: 24),
-                const Text(
-                  'Delivery App',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const Text(
-                  'Identifícate para continuar',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                  textAlign: TextAlign.center,
-                ),
+                const Text('Delivery App', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                 const SizedBox(height: 40),
-
                 TextFormField(
                   controller: _usernameController,
                   decoration: InputDecoration(
@@ -172,7 +146,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   validator: (value) => (value == null || value.isEmpty) ? 'Ingresa tu usuario' : null,
                 ),
                 const SizedBox(height: 16),
-
                 TextFormField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -188,7 +161,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   validator: (value) => (value == null || value.isEmpty) ? 'Ingresa tu contraseña' : null,
                 ),
                 const SizedBox(height: 30),
-
                 ElevatedButton(
                   onPressed: _isLoading ? null : _handleLogin,
                   style: ElevatedButton.styleFrom(
@@ -201,7 +173,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                       : const Text('ENTRAR', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
-                
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const RegisterScreen())),
