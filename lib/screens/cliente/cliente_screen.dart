@@ -126,6 +126,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
             _activeOrder = null;
           });
         }
+      } else {
+        setState(() {
+          _activeOrderId = null;
+          _activeOrder = null;
+        });
       }
     });
   }
@@ -383,7 +388,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('${e.value}x ${info?['nombre'] ?? 'Producto'}'),
+                              Expanded(child: Text('${e.value}x ${info?['nombre'] ?? 'Producto'}')),
                               Text('\$${((info?['precio'] ?? 0) * e.value).toStringAsFixed(2)}'),
                             ],
                           ),
@@ -456,28 +461,11 @@ class _ClienteScreenState extends State<ClienteScreen> {
 
     Navigator.pop(modalContext);
 
-    // Buscar repartidor disponible
-    final repartidoresSnap = await _dbRef.child('users').orderByChild('role').equalTo('Repartidor').get();
-    String? nextRepartidorId;
-
-    if (repartidoresSnap.exists) {
-      Map repartidores = repartidoresSnap.value as Map;
-      var disponibles = repartidores.entries.where((e) {
-        var data = e.value as Map;
-        return data['isAvailable'] == true && data['status'] != 'bloqueado';
-      }).toList();
-
-      if (disponibles.isNotEmpty) {
-        nextRepartidorId = disponibles.first.key;
-      }
-    }
-
     // Obtener info del restaurante del primer producto
     String? restaurantId;
     String? restaurantName;
     String? restaurantImg;
     String? productName;
-    String? productDesc;
     String? productImg;
 
     if (_productosInfo.isNotEmpty) {
@@ -495,7 +483,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
       }
     }
 
-    // Crear la orden
+    // CREAR LA ORDEN - SIN nextRepartidorId para que TODOS los repartidores la vean
     final orderRef = _dbRef.child('orders').push();
     await orderRef.set({
       'clienteId': widget.user.id,
@@ -513,7 +501,7 @@ class _ClienteScreenState extends State<ClienteScreen> {
       'productos': _carrito.map((k, v) => MapEntry(k, {'cantidad': v, 'nombre': _productosInfo[k]?['nombre'], 'precio': _productosInfo[k]?['precio']})),
       'total': _calcularTotal(),
       'status': 'pendiente',
-      'nextRepartidorId': nextRepartidorId,
+      'repartidorId': null, // SIN REPARTIDOR ASIGNADO - CUALQUIER REPARTIDOR PUEDE TOMARLO
       'timestamp': ServerValue.timestamp,
     });
 

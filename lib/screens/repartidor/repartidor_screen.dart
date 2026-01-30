@@ -6,11 +6,12 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
 
-// Función global para manejar notificaciones en segundo plano
+// Funcion global para manejar notificaciones en segundo plano
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("Manejando mensaje en segundo plano: ${message.messageId}");
@@ -33,7 +34,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   final TextEditingController _placaCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
-  int _currentIndex = 4;
+  int _currentIndex = 0;
   String? _activeOrderId;
   Map<String, dynamic>? _activeOrder;
   bool _isLoading = false;
@@ -43,11 +44,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   @override
   void initState() {
     super.initState();
-    _checkInitialStatus(); // Verificar bloqueo al entrar
+    _checkInitialStatus();
     _setupNotifications();
     _listenToOrders();
     _verificarRegistroVehiculo();
-    _listenToSecurityStatus(); // Escuchar bloqueo en tiempo real
+    _listenToSecurityStatus();
   }
 
   @override
@@ -61,17 +62,14 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     super.dispose();
   }
 
-  // Verificación inmediata al cargar la pantalla
   void _checkInitialStatus() async {
-    await Future.delayed(const Duration(milliseconds: 500)); // Pequeño delay para que cargue la UI
-
+    await Future.delayed(const Duration(milliseconds: 500));
     final snapshot = await _dbRef.child('users').child(widget.user.id).child('status').get();
     if (snapshot.exists && snapshot.value == 'bloqueado') {
       _handleLogout(forced: true);
     }
   }
 
-  // Escuchar si el administrador bloquea al usuario en tiempo real
   void _listenToSecurityStatus() {
     _userSecuritySubscription = _dbRef.child('users').child(widget.user.id).child('status').onValue.listen((event) {
       if (event.snapshot.value == 'bloqueado') {
@@ -101,7 +99,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('App abierta desde notificación: ${message.data}');
+      print('App abierta desde notificacion: ${message.data}');
     });
   }
 
@@ -112,7 +110,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title ?? "Nueva Notificación", style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(title ?? "Nueva Notificacion", style: const TextStyle(fontWeight: FontWeight.bold)),
             Text(body ?? ""),
           ],
         ),
@@ -138,7 +136,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Información del Vehículo", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("Informacion del Vehiculo", style: TextStyle(fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -148,7 +146,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               controller: _vehiculoCtrl,
               decoration: InputDecoration(
                   hintText: "Ej: Moto Pulsar 200",
-                  labelText: "Vehículo",
+                  labelText: "Vehiculo",
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
               ),
             ),
@@ -173,7 +171,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 });
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Datos guardados con éxito"), backgroundColor: Colors.green)
+                    const SnackBar(content: Text("Datos guardados con exito"), backgroundColor: Colors.green)
                 );
               }
             },
@@ -254,7 +252,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   String _getTitle() {
     switch (_currentIndex) {
-      case 0: return "Gestión de Pedidos";
+      case 0: return "Gestion de Pedidos";
       case 1: return "Mapa de Entrega";
       case 2: return "Chat Directo";
       case 3: return "Balance de Ganancias";
@@ -348,96 +346,178 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-          return _noOrdersUI("No hay órdenes en el sistema");
+          return _noOrdersUI("No hay ordenes en el sistema");
         }
         Map orders = snapshot.data!.snapshot.value as Map;
+
         var incoming = orders.entries.where((e) {
           var val = e.value;
-          return val['status'] == 'pendiente' && val['nextRepartidorId'] == widget.user.id;
+          String status = val['status']?.toString() ?? '';
+          String? repartidorId = val['repartidorId']?.toString();
+
+          bool isPendiente = status == 'pendiente';
+          bool sinRepartidor = repartidorId == null || repartidorId.isEmpty || repartidorId == 'null';
+
+          return isPendiente && sinRepartidor;
         }).toList();
 
         if (incoming.isEmpty) {
           return _noOrdersUI("Esperando nuevas solicitudes...");
         }
 
-        var data = Map<String, dynamic>.from(incoming.first.value);
-        var orderId = incoming.first.key;
-
-        return SingleChildScrollView(
+        return ListView.builder(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                elevation: 5,
-                child: Column(
-                  children: [
-                    if (data['restaurantImg'] != null)
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                        child: Image.memory(base64Decode(data['restaurantImg']), height: 180, width: double.infinity, fit: BoxFit.cover),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(data['restaurantName'] ?? "Restaurante", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                              Text("\$${data['total']}", style: const TextStyle(fontSize: 22, color: Colors.green, fontWeight: FontWeight.bold)),
-                            ],
+          itemCount: incoming.length,
+          itemBuilder: (context, index) {
+            var entry = incoming[index];
+            var data = Map<String, dynamic>.from(entry.value);
+            var orderId = entry.key;
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              elevation: 5,
+              child: Column(
+                children: [
+                  if (data['restaurantImg'] != null && data['restaurantImg'].toString().isNotEmpty)
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+                      child: Image.memory(base64Decode(data['restaurantImg']), height: 150, width: double.infinity, fit: BoxFit.cover),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                data['restaurantName'] ?? "Restaurante",
+                                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.green[100],
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                "\$${(data['total'] ?? 0).toStringAsFixed(2)}",
+                                style: TextStyle(fontSize: 18, color: Colors.green[700], fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            const Icon(Icons.person, size: 18, color: Colors.grey),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                "Cliente: ${data['clienteNombre'] ?? 'Sin nombre'}",
+                                style: const TextStyle(fontSize: 14),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(Icons.location_on, size: 18, color: Colors.grey),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                data['direccionPrincipal'] ?? 'Sin direccion',
+                                style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (data['referencia'] != null && data['referencia'].toString().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.note, size: 18, color: Colors.grey),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    "Ref: ${data['referencia']}",
+                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              const Icon(Icons.person, size: 16, color: Colors.grey),
-                              const SizedBox(width: 5),
-                              Text("Cliente: ${data['clienteNombre']}"),
-                            ],
-                          ),
-                          const Divider(height: 30),
-                          const Text("DETALLE DEL PRODUCTO", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
-                          const SizedBox(height: 10),
+                        const Divider(height: 24),
+                        const Text("PRODUCTOS", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
+                        const SizedBox(height: 8),
+                        if (data['productos'] != null)
+                          ...((data['productos'] as Map).entries.map((p) {
+                            var prod = p.value;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Expanded(child: Text("${prod['cantidad']}x ${prod['nombre'] ?? 'Producto'}")),
+                                  Text("\$${((prod['precio'] ?? 0) * (prod['cantidad'] ?? 1)).toStringAsFixed(2)}"),
+                                ],
+                              ),
+                            );
+                          }).toList())
+                        else
                           ListTile(
                             contentPadding: EdgeInsets.zero,
-                            leading: data['productImg'] != null
-                                ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(data['productImg']), width: 60, height: 60, fit: BoxFit.cover))
+                            leading: data['productImg'] != null && data['productImg'].toString().isNotEmpty
+                                ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(base64Decode(data['productImg']), width: 50, height: 50, fit: BoxFit.cover))
                                 : const CircleAvatar(child: Icon(Icons.fastfood)),
                             title: Text(data['productName'] ?? "Producto"),
-                            subtitle: Text(data['productDesc'] ?? ""),
                           ),
-                        ],
-                      ),
+                      ],
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => _rechazarPedido(orderId),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.white, side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 15)),
-                              child: const Text("RECHAZAR", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => _rechazarPedido(orderId),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
+                            child: const Text("RECHAZAR", style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
-                          const SizedBox(width: 15),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => _aceptarPedido(orderId),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 15)),
-                              child: const Text("ACEPTAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => _aceptarPedido(orderId),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
+                            child: const Text("ACEPTAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                           ),
-                        ],
-                      ),
-                    )
-                  ],
-                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -456,43 +536,337 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
+  // CORREGIDO: Metodo _buildMapaView sin Stack problematico
   Widget _buildMapaView() {
     if (_activeOrder == null) {
-      return const Center(child: Text("Debes tener una orden activa para ver el mapa"));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.map_outlined, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              "Debes aceptar una orden para ver el mapa",
+              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
     }
-    return Stack(
+
+    String direccion = _activeOrder!['direccionPrincipal'] ?? 'Sin direccion';
+    String direccionSecundaria = _activeOrder!['direccionSecundaria'] ?? '';
+    String referencia = _activeOrder!['referencia'] ?? '';
+    String clienteNombre = _activeOrder!['clienteNombre'] ?? 'Cliente';
+    String telefono = _activeOrder!['telefono'] ?? '';
+
+    double? lat;
+    double? lng;
+
+    if (direccion.contains('Lat:')) {
+      try {
+        lat = double.parse(direccion.replaceAll('Lat:', '').trim());
+      } catch (e) {
+        lat = null;
+      }
+    }
+    if (direccionSecundaria.contains('Lng:')) {
+      try {
+        lng = double.parse(direccionSecundaria.replaceAll('Lng:', '').trim());
+      } catch (e) {
+        lng = null;
+      }
+    }
+
+    return Column(
       children: [
-        Container(
-          color: Colors.blue[50],
-          child: Center(
-            child: Column(
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.blue[100]!, Colors.blue[50]!],
+              ),
+            ),
+            child: lat != null && lng != null
+                ? Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.location_on, size: 100, color: Colors.pink),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Icon(Icons.location_on, size: 60, color: Colors.red[600]),
+                ),
                 const SizedBox(height: 20),
-                Text("Destino: ${_activeOrder!['clienteNombre']}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                Text("ID de Cliente: ${_activeOrder!['clienteId']}"),
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 40),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(15),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      const Text(
+                        "COORDENADAS DEL CLIENTE",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        "Lat: ${lat.toStringAsFixed(6)}",
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        "Lng: ${lng.toStringAsFixed(6)}",
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 15),
+                      ElevatedButton.icon(
+                        onPressed: () => _abrirEnGoogleMaps(lat!, lng!),
+                        icon: const Icon(Icons.map, size: 18),
+                        label: const Text("Abrir en Google Maps"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue[600],
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            )
+                : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.location_on, size: 80, color: Colors.pink[300]),
+                const SizedBox(height: 16),
+                const Text(
+                  "Direccion del cliente:",
+                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: Text(
+                    direccion,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                if (direccionSecundaria.isNotEmpty && !direccionSecundaria.contains('Lng:'))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      direccionSecundaria,
+                      style: TextStyle(color: Colors.grey[600]),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
               ],
             ),
           ),
         ),
-        Positioned(
-          bottom: 20, left: 20, right: 20,
-          child: Card(
-            child: ListTile(
-              leading: const Icon(Icons.directions, color: Colors.blue),
-              title: const Text("Indicaciones de Entrega"),
-              subtitle: Text(_activeOrder!['productName'] ?? "Sin nombre"),
+
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.pink[50],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.person, color: Colors.pink[600]),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            clienteNombre,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          if (telefono.isNotEmpty)
+                            Text(
+                              telefono,
+                              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (telefono.isNotEmpty)
+                      IconButton(
+                        onPressed: () => _llamarCliente(telefono),
+                        icon: const Icon(Icons.phone, color: Colors.green),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.green[50],
+                        ),
+                      ),
+                  ],
+                ),
+                const Divider(height: 24),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.location_on, color: Colors.red[400], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            direccion,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          if (direccionSecundaria.isNotEmpty && !direccionSecundaria.contains('Lng:'))
+                            Text(
+                              direccionSecundaria,
+                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            ),
+                          if (referencia.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                "Ref: $referencia",
+                                style: TextStyle(
+                                  color: Colors.blue[700],
+                                  fontSize: 13,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => setState(() => _currentIndex = 2),
+                        icon: const Icon(Icons.chat),
+                        label: const Text("CHAT"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.pink[600],
+                          side: BorderSide(color: Colors.pink[600]!),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _finalizarPedidoCompleto,
+                        icon: const Icon(Icons.check_circle),
+                        label: const Text("ENTREGADO"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-        )
+        ),
       ],
     );
   }
 
+  void _abrirEnGoogleMaps(double lat, double lng) async {
+    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("No se pudo abrir Google Maps"), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _llamarCliente(String telefono) async {
+    final url = Uri.parse('tel:$telefono');
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Llamar a: $telefono"), backgroundColor: Colors.blue),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Llamar a: $telefono"), backgroundColor: Colors.blue),
+      );
+    }
+  }
+
   Widget _buildChatView() {
     if (_activeOrder == null) {
-      return const Center(child: Text("El chat se habilitará cuando aceptes una orden"));
+      return const Center(child: Text("El chat se habilitara cuando aceptes una orden"));
     }
     return Column(
       children: [
@@ -507,7 +881,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(_activeOrder!['clienteNombre'] ?? "Cliente", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const Text("En línea", style: TextStyle(color: Colors.green, fontSize: 12)),
+                  const Text("En linea", style: TextStyle(color: Colors.green, fontSize: 12)),
                 ],
               )
             ],
@@ -518,10 +892,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             stream: _dbRef.child('chats').child(_activeOrderId!).onValue,
             builder: (context, AsyncSnapshot<DatabaseEvent> snap) {
               if (!snap.hasData || snap.data!.snapshot.value == null) {
-                return const Center(child: Text("Inicia una conversación con el cliente"));
+                return const Center(child: Text("Inicia una conversacion con el cliente"));
               }
               Map msgs = snap.data!.snapshot.value as Map;
-              var list = msgs.entries.toList()..sort((a, b) => a.value['t'].compareTo(b.value['t']));
+              var list = msgs.entries.toList()..sort((a, b) => (a.value['t'] ?? 0).compareTo(b.value['t'] ?? 0));
 
               return ListView.builder(
                 controller: _chatScrollController,
@@ -562,7 +936,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             Text(msg, style: TextStyle(color: isMe ? Colors.white : Colors.black87, fontSize: 15)),
             const SizedBox(height: 4),
             Text(
-              DateFormat('HH:mm').format(DateTime.fromMillisecondsSinceEpoch(time)),
+              time != null ? DateFormat('HH:mm').format(DateTime.fromMillisecondsSinceEpoch(time)) : '',
               style: TextStyle(color: isMe ? Colors.white70 : Colors.grey, fontSize: 10),
             ),
           ],
@@ -601,7 +975,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   }
 
   void _sendChatMessage() {
-    if (_chatCtrl.text.trim().isEmpty) return;
+    if (_chatCtrl.text.trim().isEmpty || _activeOrderId == null) return;
     _dbRef.child('chats').child(_activeOrderId!).push().set({
       's': widget.user.id,
       'm': _chatCtrl.text,
@@ -761,9 +1135,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              _infoTile(Icons.star, "Mi Reputación", "${avgRating.toStringAsFixed(1)} / 5.0", Colors.amber),
+              _infoTile(Icons.star, "Mi Reputacion", "${avgRating.toStringAsFixed(1)} / 5.0", Colors.amber),
               _infoTile(Icons.comment, "Feedback de Clientes", lastFeedback, Colors.blue),
-              _infoTile(Icons.directions_bike, "Vehículo", displayVehiculo, Colors.orange),
+              _infoTile(Icons.directions_bike, "Vehiculo", displayVehiculo, Colors.orange),
               _infoTile(Icons.vignette, "Placa", displayPlaca, Colors.deepPurple),
               _infoTile(Icons.verified_user, "Estado de Cuenta", (myData['status'] ?? "Activo").toString().toUpperCase(), Colors.green),
             ],
@@ -807,15 +1181,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       'repartidorFoto': fotoActual,
       'timestamp_aceptado': ServerValue.timestamp,
     });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pedido aceptado. Dirígete al local."), backgroundColor: Colors.green));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pedido aceptado. Dirigete al local."), backgroundColor: Colors.green));
+    setState(() => _currentIndex = 1);
   }
 
   void _rechazarPedido(String id) async {
-    int nextId = (int.tryParse(widget.user.id) ?? 0) + 1;
-    await _dbRef.child('orders').child(id).update({
-      'nextRepartidorId': nextId.toString(),
-    });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pedido rechazado."), backgroundColor: Colors.red));
+    await _dbRef.child('orders').child(id).child('rejectedBy').child(widget.user.id).set(true);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pedido rechazado"), backgroundColor: Colors.orange));
   }
 
   void _finalizarPedidoCompleto() async {
@@ -825,7 +1197,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       'timestamp_finalizado': ServerValue.timestamp,
     });
     setState(() => _currentIndex = 4);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("¡Felicidades! Entrega finalizada."), backgroundColor: Colors.green));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Felicidades! Entrega finalizada."), backgroundColor: Colors.green));
   }
 
   void _handleLogout({bool forced = false}) async {
@@ -838,7 +1210,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           (route) => false,
     );
 
-    // Mostrar diálogo emergente si fue bloqueado
     if (forced) {
       Future.delayed(const Duration(milliseconds: 300), () {
         if (!mounted) return;
