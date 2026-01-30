@@ -1,114 +1,39 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permisos de Internet -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
-
-    <!-- Permisos de Ubicación (GPS) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
-
-    <!-- Permisos de Notificaciones -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <uses-permission android:name="android.permission.WAKE_LOCK"/>
-
-    <!-- Permisos de Cámara y Galería -->
-    <uses-permission android:name="android.permission.CAMERA"/>
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-
-    <!-- Permisos de Teléfono (para llamadas) -->
-    <uses-permission android:name="android.permission.CALL_PHONE"/>
-    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
-
-    <!-- Permisos de Almacenamiento -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
-
-    <!-- Permiso para mantener la app activa en segundo plano -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
-
-    <!-- Características de hardware opcionales -->
-    <uses-feature android:name="android.hardware.camera" android:required="false"/>
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
-    <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
-    <uses-feature android:name="android.hardware.telephony" android:required="false"/>
 
     <application
-            android:label="Delivery App"
-            android:name="${applicationName}"
-            android:icon="@mipmap/ic_launcher"
-            android:usesCleartextTraffic="true"
-            android:requestLegacyExternalStorage="true">
+        android:label="Delivery App"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
 
         <activity
-                android:name=".MainActivity"
-                android:exported="true"
-                android:launchMode="singleTop"
-                android:taskAffinity=""
-                android:theme="@style/LaunchTheme"
-                android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                android:hardwareAccelerated="true"
-                android:windowSoftInputMode="adjustResize"
-                android:showWhenLocked="true"
-                android:turnScreenOn="true">
-            <meta-data
-                    android:name="io.flutter.embedding.android.NormalTheme"
-                    android:resource="@style/NormalTheme"
-            />
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-
-            <!-- Intent filter para deep links -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="deliveryapp"/>
-            </intent-filter>
         </activity>
 
-        <!-- Meta-data para Google Maps (si se usa) -->
         <meta-data
-                android:name="com.google.android.geo.API_KEY"
-                android:value="TU_GOOGLE_MAPS_API_KEY"/>
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyDGCQea-Zs0194-LeR4CCHQofEUubl1Yh0"/>
 
         <meta-data
-                android:name="flutterEmbedding"
-                android:value="2" />
+            android:name="flutterEmbedding"
+            android:value="2" />
     </application>
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
-        </intent>
-        <!-- Para abrir URLs en el navegador -->
-        <intent>
-            <action android:name="android.intent.action.VIEW"/>
-            <data android:scheme="https"/>
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW"/>
-            <data android:scheme="http"/>
-        </intent>
-        <!-- Para hacer llamadas -->
-        <intent>
-            <action android:name="android.intent.action.DIAL"/>
-            <data android:scheme="tel"/>
-        </intent>
-        <!-- Para abrir mapas -->
-        <intent>
-            <action android:name="android.intent.action.VIEW"/>
-            <data android:scheme="geo"/>
-        </intent>
-    </queries>
 </manifest>

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../models/user_model.dart';
-import '../../services/database_service.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 class UsersManagementScreen extends StatefulWidget {
   const UsersManagementScreen({Key? key}) : super(key: key);
@@ -10,82 +9,146 @@ class UsersManagementScreen extends StatefulWidget {
 }
 
 class _UsersManagementScreenState extends State<UsersManagementScreen> {
-  final _databaseService = DatabaseService();
-  String _selectedRole = 'todos';
+  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref().child('users');
+  String _selectedFilter = 'Todos';
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: Colors.pink[50],
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Gestión de Usuarios',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+        // --- FILTROS EXACTOS (Todos, Cliente, Repartidor, Administrador) ---
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+          child: Row(
+            children: ['Todos', 'Cliente', 'Repartidor', 'Administrador'].map((filter) {
+              bool isSelected = _selectedFilter == filter;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(filter),
+                  selected: isSelected,
+                  selectedColor: Colors.pink[600],
+                  labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black),
+                  onSelected: (val) => setState(() => _selectedFilter = filter),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Administra clientes, repartidores y administradores',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 16),
-              // Filtro por rol
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    _buildRoleFilter('todos', 'Todos'),
-                    _buildRoleFilter('cliente', 'Clientes'),
-                    _buildRoleFilter('repartidor', 'Repartidores'),
-                    _buildRoleFilter('admin', 'Administradores'),
-                  ],
-                ),
-              ),
-            ],
+              );
+            }).toList(),
           ),
         ),
+
+        // --- LISTA DE USUARIOS ---
         Expanded(
-          child: StreamBuilder<List<UserModel>>(
-            stream: _selectedRole == 'todos'
-                ? _databaseService.getAllUsers()
-                : _databaseService.getUsersByRole(_selectedRole),
-            builder: (context, snapshot) {
+          child: StreamBuilder(
+            stream: _dbRef.onValue,
+            builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.people, size: 80, color: Colors.grey[400]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No hay usuarios',
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
+              if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
+                return const Center(child: Text('No hay usuarios registrados.'));
+              }
+
+              Map values = snapshot.data!.snapshot.value as Map;
+              List<MapEntry> userEntries = values.entries.toList();
+
+              // --- FILTRADO CORREGIDO PARA "Administrador" ---
+              List<MapEntry> items = userEntries.where((e) {
+                final d = Map<String, dynamic>.from(e.value as Map);
+                String role = (d['role'] ?? 'Cliente').toString().toLowerCase();
+                
+                if (_selectedFilter == 'Todos') return true;
+                if (_selectedFilter == 'Administrador') {
+                  return role == 'admin' || role == 'administrador';
+                }
+                return role == _selectedFilter.toLowerCase();
+              }).toList();
+
+              if (items.isEmpty) {
+                return Center(child: Text('No hay usuarios en la categoría: $_selectedFilter'));
               }
 
               return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: snapshot.data!.length,
+                itemCount: items.length,
                 itemBuilder: (context, index) {
-                  final user = snapshot.data![index];
-                  return _buildUserCard(user);
+                  final key = items[index].key;
+                  final userData = Map<String, dynamic>.from(items[index].value as Map);
+                  
+                  String name = userData['username'] ?? 'Usuario';
+                  String role = userData['role'] ?? 'Cliente';
+                  String email = userData['email'] ?? 'Sin correo';
+                  // Usamos 'bloqueado' como valor de estado para mayor claridad
+                  bool isActive = userData['status'] != 'bloqueado';
+                  bool isAdmin = role.toLowerCase() == 'admin' || role.toLowerCase() == 'administrador';
+
+                  return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+                    elevation: isActive ? 2 : 0,
+                    color: isActive ? Colors.white : Colors.grey[200],
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: isAdmin ? Colors.red : (isActive ? Colors.blue : Colors.grey),
+                        child: Icon(isAdmin ? Icons.security : Icons.person, color: Colors.white),
+                      ),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name, 
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: isActive ? Colors.black : Colors.grey[600]
+                              )
+                            )
+                          ),
+                          // --- ETIQUETA DE ESTADO AL LADO DEL NOMBRE ---
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: isActive ? Colors.green[100] : Colors.red[100],
+                              borderRadius: BorderRadius.circular(10)
+                            ),
+                            child: Text(
+                              isActive ? "Estado: Activo" : "Estado: Bloqueado",
+                              style: TextStyle(
+                                fontSize: 10, 
+                                color: isActive ? Colors.green[800] : Colors.red[800], 
+                                fontWeight: FontWeight.bold
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      subtitle: Text('Email: $email\nRol: $role'),
+                      isThreeLine: true,
+                      
+                      // --- LÓGICA DE SEGURIDAD (TRAILING) ---
+                      // Si el usuario es administrador, desaparecen los 3 puntos (null)
+                      trailing: isAdmin ? null : PopupMenuButton<String>(
+                        onSelected: (value) async {
+                          if (value == 'toggle_status') {
+                            await _dbRef.child(key!).update({
+                              'status': isActive ? 'bloqueado' : 'activo'
+                            });
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'toggle_status',
+                            child: Row(
+                              children: [
+                                Icon(isActive ? Icons.block : Icons.check_circle, 
+                                     color: isActive ? Colors.red : Colors.green),
+                                const SizedBox(width: 10),
+                                Text(isActive ? 'Bloquear Acceso' : 'Activar Acceso'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
                 },
               );
             },
@@ -93,164 +156,5 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
         ),
       ],
     );
-  }
-
-  Widget _buildRoleFilter(String role, String label) {
-    final isSelected = _selectedRole == role;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: FilterChip(
-        label: Text(label),
-        selected: isSelected,
-        onSelected: (selected) {
-          setState(() => _selectedRole = role);
-        },
-        backgroundColor: Colors.white,
-        selectedColor: Colors.pink[100],
-        checkmarkColor: Colors.pink[600],
-        labelStyle: TextStyle(
-          color: isSelected ? Colors.pink[600] : Colors.grey[700],
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildUserCard(UserModel user) {
-    IconData roleIcon;
-    Color roleColor;
-
-    switch (user.role) {
-      case 'admin':
-        roleIcon = Icons.admin_panel_settings;
-        roleColor = Colors.purple;
-        break;
-      case 'repartidor':
-        roleIcon = Icons.delivery_dining;
-        roleColor = Colors.orange;
-        break;
-      default:
-        roleIcon = Icons.person;
-        roleColor = Colors.blue;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: roleColor.withOpacity(0.2),
-          child: Icon(roleIcon, color: roleColor),
-        ),
-        title: Text(
-          user.username,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(user.email),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: roleColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _getRoleLabel(user.role),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: roleColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (user.role == 'repartidor' && user.isAvailable != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: user.isAvailable!
-                          ? Colors.green.withOpacity(0.1)
-                          : Colors.grey.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      user.isAvailable! ? 'Disponible' : 'No disponible',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: user.isAvailable! ? Colors.green : Colors.grey,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-        isThreeLine: true,
-        trailing: PopupMenuButton(
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: 'toggle_status',
-              child: ListTile(
-                leading: Icon(
-                  user.isActive ? Icons.block : Icons.check_circle,
-                  color: user.isActive ? Colors.red : Colors.green,
-                ),
-                title: Text(user.isActive ? 'Desactivar' : 'Activar'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          ],
-          onSelected: (value) {
-            if (value == 'toggle_status') {
-              _toggleUserStatus(user);
-            }
-          },
-        ),
-      ),
-    );
-  }
-
-  String _getRoleLabel(String role) {
-    switch (role) {
-      case 'admin':
-        return 'Administrador';
-      case 'repartidor':
-        return 'Repartidor';
-      case 'cliente':
-        return 'Cliente';
-      default:
-        return role;
-    }
-  }
-
-  void _toggleUserStatus(UserModel user) async {
-    try {
-      await _databaseService.updateUser(user.id, {
-        'isActive': !user.isActive,
-      });
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            user.isActive ? 'Usuario desactivado' : 'Usuario activado',
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 }

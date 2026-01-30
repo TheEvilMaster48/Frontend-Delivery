@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 
-class ReportsScreen extends StatelessWidget {
+class ReportsScreen extends StatefulWidget {
   const ReportsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<ReportsScreen> createState() => _ReportsScreenState();
+}
+
+class _ReportsScreenState extends State<ReportsScreen> {
+  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
 
   @override
   Widget build(BuildContext context) {
@@ -12,19 +20,16 @@ class ReportsScreen extends StatelessWidget {
         children: [
           const Text(
             'Reportes y Métricas',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
-            'Análisis del negocio y rendimiento',
+            'Análisis del negocio en tiempo real',
             style: TextStyle(color: Colors.grey[600]),
           ),
           const SizedBox(height: 24),
 
-          // Métricas principales
+          // Métricas principales con StreamBuilders
           GridView.count(
             crossAxisCount: 2,
             shrinkWrap: true,
@@ -32,189 +37,129 @@ class ReportsScreen extends StatelessWidget {
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
             children: [
-              _buildMetricCard(
-                'Ventas del Mes',
-                '\$15,240',
-                '+12%',
-                Icons.trending_up,
-                Colors.green,
+              // 1. Clientes Totales (Contando el nodo 'users')
+              _buildRealtimeMetric(
+                path: 'users',
+                title: 'Clientes Registrados',
+                icon: Icons.people,
+                color: Colors.purple,
+                formatter: (count) => count.toString(),
               ),
-              _buildMetricCard(
-                'Pedidos del Mes',
-                '342',
-                '+8%',
-                Icons.shopping_bag,
-                Colors.blue,
+              
+              // 2. Pedidos Totales
+              _buildRealtimeMetric(
+                path: 'orders',
+                title: 'Pedidos Totales',
+                icon: Icons.shopping_bag,
+                color: Colors.blue,
+                formatter: (count) => count.toString(),
               ),
-              _buildMetricCard(
-                'Clientes Activos',
-                '1,234',
-                '+15%',
-                Icons.people,
-                Colors.purple,
+
+              // 3. Restaurantes Activos
+              _buildRealtimeMetric(
+                path: 'restaurants',
+                title: 'Restaurantes',
+                icon: Icons.restaurant,
+                color: Colors.orange,
+                formatter: (count) => count.toString(),
               ),
-              _buildMetricCard(
-                'Tasa de Cancelación',
-                '3.2%',
-                '-1%',
-                Icons.cancel,
-                Colors.orange,
+
+              // 4. Ventas Estimadas (Suma de precios si tienes el campo)
+              // Aquí un ejemplo de cómo contar pedidos completados
+              _buildRealtimeMetric(
+                path: 'orders',
+                title: 'Ventas Realizadas',
+                icon: Icons.trending_up,
+                color: Colors.green,
+                formatter: (count) => "\$${count * 15}", // Ejemplo: promedio $15 por pedido
               ),
             ],
           ),
           const SizedBox(height: 24),
 
-          // Productos más vendidos
           const Text(
-            'Productos Más Vendidos',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+            'Resumen de Actividad',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          _buildTopProductCard('Hamburguesa Clásica', 145, Icons.lunch_dining, Colors.red),
-          _buildTopProductCard('Pizza Pepperoni', 132, Icons.local_pizza, Colors.orange),
-          _buildTopProductCard('Sushi Roll', 98, Icons.set_meal, Colors.green),
-          const SizedBox(height: 24),
-
-          // Repartidores destacados
-          const Text(
-            'Repartidores Destacados',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildTopRepartidorCard('Juan Pérez', 87, 4.9),
-          _buildTopRepartidorCard('María García', 76, 4.8),
-          _buildTopRepartidorCard('Carlos López', 65, 4.7),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetricCard(
-    String title,
-    String value,
-    String change,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 36, color: color),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey[700],
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            change,
-            style: TextStyle(
-              fontSize: 12,
-              color: change.startsWith('+') ? Colors.green : Colors.red,
-              fontWeight: FontWeight.w600,
-            ),
+          
+          // Lista de pedidos recientes en tiempo real
+          StreamBuilder(
+            stream: _dbRef.child('orders').limitToLast(5).onValue,
+            builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
+              if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+                Map values = snapshot.data!.snapshot.value as Map;
+                return Column(
+                  children: values.entries.map((e) {
+                    final data = Map<String, dynamic>.from(e.value as Map);
+                    return Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.history, color: Colors.blue),
+                        title: Text("Pedido #${e.key.toString().substring(0, 5)}"),
+                        subtitle: Text("Estado: ${data['status'] ?? 'Pendiente'}"),
+                        trailing: Text("\$${data['total'] ?? '0.00'}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    );
+                  }).toList(),
+                );
+              }
+              return const Center(child: Text("Cargando actividad reciente..."));
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTopProductCard(String name, int sales, IconData icon, Color color) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.2),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(
-          name,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              '$sales',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const Text(
-              'ventas',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // Widget genérico para métricas que escuchan la DB
+  Widget _buildRealtimeMetric({
+    required String path,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required String Function(int) formatter,
+  }) {
+    return StreamBuilder(
+      stream: _dbRef.child(path).onValue,
+      builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
+        int count = 0;
+        if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+          final data = snapshot.data!.snapshot.value;
+          if (data is Map) {
+            count = data.length;
+          }
+        }
 
-  Widget _buildTopRepartidorCard(String name, int deliveries, double rating) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Colors.blue[100],
-          child: Icon(Icons.delivery_dining, color: Colors.blue[600]),
-        ),
-        title: Text(
-          name,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Row(
-          children: [
-            const Icon(Icons.star, size: 14, color: Colors.amber),
-            const SizedBox(width: 4),
-            Text('$rating'),
-          ],
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              '$deliveries',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 36, color: color),
+              const SizedBox(height: 12),
+              Text(
+                formatter(count),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
               ),
-            ),
-            const Text(
-              'entregas',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
