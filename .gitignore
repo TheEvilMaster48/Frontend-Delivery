@@ -1,0 +1,28 @@
+# NODE / JS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+out/
+dist/
+build/
+
+# FLUTTER/DART
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+
+# ANDROID / IDE
+android/.gradle/
+android/app/build/
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
