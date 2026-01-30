@@ -7,6 +7,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geocoding/geocoding.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
@@ -41,6 +43,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   StreamSubscription<DatabaseEvent>? _ordersSubscription;
   StreamSubscription<DatabaseEvent>? _userSecuritySubscription;
 
+  // Variables para Google Maps
+  GoogleMapController? _mapController;
+  LatLng? _clienteLocation;
+  String? _direccionGeocoded;
+  bool _isLoadingLocation = false;
+
   @override
   void initState() {
     super.initState();
@@ -55,6 +63,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void dispose() {
     _ordersSubscription?.cancel();
     _userSecuritySubscription?.cancel();
+    _mapController?.dispose();
     _chatCtrl.dispose();
     _chatScrollController.dispose();
     _vehiculoCtrl.dispose();
@@ -292,15 +301,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         foregroundColor: Colors.white,
         actions: [
           if (_activeOrderId != null)
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-              child: ElevatedButton.icon(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: TextButton.icon(
                 onPressed: _finalizarPedidoCompleto,
-                icon: const Icon(Icons.done_all, size: 18),
-                label: const Text("FINALIZAR"),
-                style: ElevatedButton.styleFrom(
+                icon: const Icon(Icons.done_all, size: 18, color: Colors.white),
+                label: const Text("FINALIZAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                style: TextButton.styleFrom(
                   backgroundColor: Colors.green[700],
-                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 ),
               ),
@@ -339,6 +348,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   }
 
   Widget _buildPedidosView() {
+    // Si el repartidor ya tiene una orden activa, mostrar mensaje y ocultar lista
+    if (_activeOrderId != null && _activeOrder != null) {
+      return _buildActiveOrderView();
+    }
+
     return StreamBuilder(
       stream: _dbRef.child('orders').onValue,
       builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
@@ -523,6 +537,132 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
+  // Vista cuando el repartidor tiene una orden activa - no muestra lista de pedidos
+  Widget _buildActiveOrderView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.delivery_dining, size: 80, color: Colors.orange[600]),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              "Entrega en Progreso",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "Actualmente tienes una orden activa.\nFinaliza la entrega actual para poder aceptar nuevos pedidos.",
+              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 30),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(15),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.store, color: Colors.pink[600]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _activeOrder!['restaurantName'] ?? "Restaurante",
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.person, color: Colors.grey[600]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "Cliente: ${_activeOrder!['clienteNombre'] ?? 'Sin nombre'}",
+                          style: TextStyle(color: Colors.grey[700]),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.location_on, color: Colors.red[400]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _activeOrder!['direccionPrincipal'] ?? 'Sin direccion',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => setState(() => _currentIndex = 1),
+                    icon: const Icon(Icons.map),
+                    label: const Text("VER MAPA"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.pink[600],
+                      side: BorderSide(color: Colors.pink[600]!),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _finalizarPedidoCompleto,
+                    icon: const Icon(Icons.check_circle),
+                    label: const Text("FINALIZAR"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _noOrdersUI(String msg) {
     return Center(
       child: Column(
@@ -536,7 +676,92 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
-  // CORREGIDO: Metodo _buildMapaView sin Stack problematico
+  // Metodo para obtener coordenadas de la orden activa
+  LatLng? _getOrderCoordinates() {
+    if (_activeOrder == null) return null;
+
+    // Intentar obtener lat/lng directamente de campos especificos
+    double? lat;
+    double? lng;
+
+    // Opcion 1: Campos clienteLat y clienteLng
+    if (_activeOrder!['clienteLat'] != null && _activeOrder!['clienteLng'] != null) {
+      lat = double.tryParse(_activeOrder!['clienteLat'].toString());
+      lng = double.tryParse(_activeOrder!['clienteLng'].toString());
+    }
+
+    // Opcion 2: Campos lat y lng directos
+    if (lat == null && _activeOrder!['lat'] != null && _activeOrder!['lng'] != null) {
+      lat = double.tryParse(_activeOrder!['lat'].toString());
+      lng = double.tryParse(_activeOrder!['lng'].toString());
+    }
+
+    // Opcion 3: Objeto ubicacion
+    if (lat == null && _activeOrder!['ubicacion'] != null) {
+      var ubicacion = _activeOrder!['ubicacion'];
+      if (ubicacion is Map) {
+        lat = double.tryParse(ubicacion['lat']?.toString() ?? '');
+        lng = double.tryParse(ubicacion['lng']?.toString() ?? '');
+      }
+    }
+
+    // Opcion 4: Objeto location
+    if (lat == null && _activeOrder!['location'] != null) {
+      var location = _activeOrder!['location'];
+      if (location is Map) {
+        lat = double.tryParse(location['lat']?.toString() ?? '');
+        lng = double.tryParse(location['lng']?.toString() ?? '');
+      }
+    }
+
+    // Opcion 5: Formato "Lat: X" en direccionPrincipal/direccionSecundaria
+    if (lat == null) {
+      String direccion = _activeOrder!['direccionPrincipal']?.toString() ?? '';
+      String direccionSec = _activeOrder!['direccionSecundaria']?.toString() ?? '';
+
+      if (direccion.contains('Lat:')) {
+        lat = double.tryParse(direccion.replaceAll('Lat:', '').trim());
+      }
+      if (direccionSec.contains('Lng:')) {
+        lng = double.tryParse(direccionSec.replaceAll('Lng:', '').trim());
+      }
+    }
+
+    if (lat != null && lng != null) {
+      return LatLng(lat, lng);
+    }
+    return null;
+  }
+
+  // Geocodificar direccion a coordenadas
+  Future<void> _geocodeAddress() async {
+    if (_activeOrder == null) return;
+
+    String direccion = _activeOrder!['direccionPrincipal']?.toString() ?? '';
+    if (direccion.isEmpty || direccion == 'Sin direccion') return;
+
+    // No geocodificar si ya tiene formato de coordenadas
+    if (direccion.contains('Lat:')) return;
+
+    setState(() => _isLoadingLocation = true);
+
+    try {
+      List<Location> locations = await locationFromAddress(direccion);
+      if (locations.isNotEmpty && mounted) {
+        setState(() {
+          _clienteLocation = LatLng(locations.first.latitude, locations.first.longitude);
+          _direccionGeocoded = direccion;
+          _isLoadingLocation = false;
+        });
+      }
+    } catch (e) {
+      print('Error al geocodificar: $e');
+      if (mounted) {
+        setState(() => _isLoadingLocation = false);
+      }
+    }
+  }
+
   Widget _buildMapaView() {
     if (_activeOrder == null) {
       return Center(
@@ -561,28 +786,106 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     String clienteNombre = _activeOrder!['clienteNombre'] ?? 'Cliente';
     String telefono = _activeOrder!['telefono'] ?? '';
 
-    double? lat;
-    double? lng;
+    // Obtener coordenadas de la orden
+    LatLng? coordinates = _getOrderCoordinates();
 
-    if (direccion.contains('Lat:')) {
-      try {
-        lat = double.parse(direccion.replaceAll('Lat:', '').trim());
-      } catch (e) {
-        lat = null;
-      }
-    }
-    if (direccionSecundaria.contains('Lng:')) {
-      try {
-        lng = double.parse(direccionSecundaria.replaceAll('Lng:', '').trim());
-      } catch (e) {
-        lng = null;
-      }
+    // Si no hay coordenadas de la orden, usar las geocodificadas o intentar geocodificar
+    if (coordinates == null && _clienteLocation != null) {
+      coordinates = _clienteLocation;
+    } else if (coordinates == null && !_isLoadingLocation && _direccionGeocoded != direccion) {
+      // Intentar geocodificar la direccion si no tenemos coordenadas
+      Future.microtask(() => _geocodeAddress());
     }
 
     return Column(
       children: [
         Expanded(
-          child: Container(
+          child: coordinates != null
+              ? Stack(
+            children: [
+              GoogleMap(
+                initialCameraPosition: CameraPosition(
+                  target: coordinates,
+                  zoom: 17,
+                ),
+                mapType: MapType.hybrid, // Mapa satelital con calles
+                markers: {
+                  Marker(
+                    markerId: const MarkerId('cliente'),
+                    position: coordinates,
+                    infoWindow: InfoWindow(
+                      title: clienteNombre,
+                      snippet: direccion,
+                    ),
+                    icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                  ),
+                },
+                onMapCreated: (GoogleMapController controller) {
+                  _mapController = controller;
+                },
+                myLocationEnabled: true,
+                myLocationButtonEnabled: true,
+                zoomControlsEnabled: true,
+                compassEnabled: true,
+              ),
+              // Boton para abrir en Google Maps externo
+              Positioned(
+                top: 16,
+                left: 16,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => _abrirEnGoogleMaps(coordinates!.latitude, coordinates!.longitude),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.navigation, color: Colors.blue[600], size: 20),
+                            const SizedBox(width: 6),
+                            Text(
+                              "Navegar",
+                              style: TextStyle(
+                                color: Colors.blue[600],
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          )
+              : _isLoadingLocation
+              ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  "Buscando ubicacion...",
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          )
+              : Container(
             width: double.infinity,
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -591,107 +894,38 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 colors: [Colors.blue[100]!, Colors.blue[50]!],
               ),
             ),
-            child: lat != null && lng != null
-                ? Column(
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: Icon(Icons.location_on, size: 60, color: Colors.red[600]),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 40),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 5,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        "COORDENADAS DEL CLIENTE",
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        "Lat: ${lat.toStringAsFixed(6)}",
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                      ),
-                      Text(
-                        "Lng: ${lng.toStringAsFixed(6)}",
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 15),
-                      ElevatedButton.icon(
-                        onPressed: () => _abrirEnGoogleMaps(lat!, lng!),
-                        icon: const Icon(Icons.map, size: 18),
-                        label: const Text("Abrir en Google Maps"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue[600],
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            )
-                : Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.location_on, size: 80, color: Colors.pink[300]),
+                Icon(Icons.location_off, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 const Text(
-                  "Direccion del cliente:",
-                  style: TextStyle(color: Colors.grey, fontSize: 14),
+                  "No se encontraron coordenadas",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 40),
                   child: Text(
-                    direccion,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    "Direccion: $direccion",
+                    style: TextStyle(color: Colors.grey[600]),
                     textAlign: TextAlign.center,
                   ),
                 ),
-                if (direccionSecundaria.isNotEmpty && !direccionSecundaria.contains('Lng:'))
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      direccionSecundaria,
-                      style: TextStyle(color: Colors.grey[600]),
-                      textAlign: TextAlign.center,
-                    ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _geocodeAddress,
+                  icon: const Icon(Icons.search),
+                  label: const Text("Buscar en mapa"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[600],
+                    foregroundColor: Colors.white,
                   ),
+                ),
               ],
             ),
           ),
@@ -1192,12 +1426,26 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   void _finalizarPedidoCompleto() async {
     if (_activeOrderId == null) return;
-    await _dbRef.child('orders').child(_activeOrderId!).update({
+
+    // Guardar el ID antes de limpiar el estado
+    final orderId = _activeOrderId!;
+
+    // Actualizar Firebase
+    await _dbRef.child('orders').child(orderId).update({
       'status': 'entregado',
       'timestamp_finalizado': ServerValue.timestamp,
     });
-    setState(() => _currentIndex = 4);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Felicidades! Entrega finalizada."), backgroundColor: Colors.green));
+
+    // Limpiar el estado local inmediatamente para que el repartidor quede disponible
+    if (mounted) {
+      setState(() {
+        _activeOrderId = null;
+        _activeOrder = null;
+        _currentIndex = 0; // Ir a la lista de pedidos para poder aceptar nuevos
+      });
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Felicidades! Entrega finalizada. Ya puedes aceptar nuevos pedidos."), backgroundColor: Colors.green));
   }
 
   void _handleLogout({bool forced = false}) async {
